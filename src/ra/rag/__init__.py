@@ -1,0 +1,1 @@
+"""Ra retrieval core: embeddings, indexing, storage, retrieval, sources, CLI."""

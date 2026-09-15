@@ -1,0 +1,21 @@
+# secrets
+.env
+*.pem
+*.key
+
+# ra app
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+*.pyc
+.ra/
+~/.ra/
+data/
+
+# pyinstaller build output
+hud/build/
+hud/dist/
+
+# OS
+.DS_Store
+Thumbs.db

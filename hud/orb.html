@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ra Orb</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #030408;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: grab;
+  }
+  body.dragging { cursor: grabbing; }
+
+  #orbStage {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 148px;
+    height: 148px;
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #orbStage canvas {
+    display: block;
+    width: 148px !important;
+    height: 148px !important;
+  }
+
+  /* soft glow behind the orb, tinted by state, like the HUD's own aura */
+  #aura {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 150px;
+    height: 150px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: rgba(217, 101, 0, 0.22);
+    filter: blur(26px);
+    animation: auraPulse 3.2s ease-in-out infinite;
+    pointer-events: none;
+    transition: background-color 0.5s ease;
+  }
+  @keyframes auraPulse {
+    0%, 100% { opacity: 0.7; transform: translate(-50%, -50%) scale(1); }
+    50%      { opacity: 1;   transform: translate(-50%, -50%) scale(1.1); }
+  }
+</style>
+</head>
+<body>
+<div id="aura"></div>
+<div id="orbStage"></div>
+
+<script>
+(function () {
+  'use strict';
+  var stage = document.getElementById('orbStage');
+  var aura = document.getElementById('aura');
+  var agentState = 'idle';
+
+  // ── the exact 3D mini orb from the HUD ──────────────────────────────
+  var dotTex = (function () {
+    var c = document.createElement('canvas');
+    c.width = c.height = 64;
+    var ctx = c.getContext('2d');
+    var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  })();
+
+  var scene, camera, renderer, coreGroup, outerSwarm, cage1, singularity, auraMesh, gimbalGroup;
+  var ringNodes = [], ringMeshes = [];
+
+  function buildOrb() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    camera.position.set(0, 0, 140);
+    camera.lookAt(0, 0, 0);
+
+    coreGroup = new THREE.Group();
+    coreGroup.position.set(0, 0, 0);
+    scene.add(coreGroup);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setSize(148, 148);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setClearColor(0x030408, 1);
+    stage.appendChild(renderer.domElement);
+
+    var count = 520;
+    var pos = new Float32Array(count * 3);
+    var col = new Float32Array(count * 3);
+    var goldenRatio = (1 + Math.sqrt(5)) / 2;
+    var goldenAngle = 2 * Math.PI * (1 - 1 / goldenRatio);
+    for (var i = 0; i < count; i++) {
+      var phi = Math.acos(1 - 2 * (i + 0.5) / count);
+      var theta = goldenAngle * i;
+      var r = 35 * (1 + ((i % 5) - 2) * 0.02);
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.cos(phi);
+      pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+      col[i * 3] = 1.0; col[i * 3 + 1] = 0.52; col[i * 3 + 2] = 0.05;
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    var mat = new THREE.PointsMaterial({
+      size: 3.2, map: dotTex, vertexColors: true, transparent: true,
+      opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    outerSwarm = new THREE.Points(geo, mat);
+    coreGroup.add(outerSwarm);
+
+    var cageGeo = new THREE.IcosahedronGeometry(20, 1);
+    var cageMat = new THREE.MeshBasicMaterial({
+      color: 0xff7700, wireframe: true, transparent: true,
+      opacity: 0.45, blending: THREE.AdditiveBlending
+    });
+    cage1 = new THREE.Mesh(cageGeo, cageMat);
+    cage1.position.set(0, 0, 0);
+    coreGroup.add(cage1);
+
+    var singGeo = new THREE.SphereGeometry(6, 16, 16);
+    var singMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.98, blending: THREE.AdditiveBlending
+    });
+    singularity = new THREE.Mesh(singGeo, singMat);
+    singularity.position.set(0, 0, 0);
+    coreGroup.add(singularity);
+
+    var auraGeo = new THREE.SphereGeometry(10.5, 16, 16);
+    var auraMat = new THREE.MeshBasicMaterial({
+      color: 0xff7700, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, side: THREE.BackSide
+    });
+    auraMesh = new THREE.Mesh(auraGeo, auraMat);
+    auraMesh.position.set(0, 0, 0);
+    coreGroup.add(auraMesh);
+
+    gimbalGroup = new THREE.Group();
+    function ring(radius, tube, color, opacity, vx, vy, vz) {
+      var pivot = new THREE.Group();
+      var g = new THREE.TorusGeometry(radius, tube, 12, 64);
+      var m = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity, blending: THREE.AdditiveBlending
+      });
+      var mesh = new THREE.Mesh(g, m);
+      pivot.add(mesh);
+      gimbalGroup.add(pivot);
+      ringMeshes.push(mesh);
+      ringNodes.push({ pivot: pivot, vx: vx, vy: vy, vz: vz });
+    }
+    ring(45, 0.65, 0xff8c00, 0.8, 0.007, 0.012, 0.006);
+    ring(48, 0.6, 0xd96500, 0.7, -0.01, 0.008, 0.009);
+    ring(39, 0.55, 0xffaa00, 0.65, 0.009, -0.01, -0.007);
+    coreGroup.add(gimbalGroup);
+  }
+
+  function stateColor() {
+    if (agentState === 'speaking') return new THREE.Color(0xffffff);
+    if (agentState === 'listening') return new THREE.Color(0xd0ffea);
+    if (agentState === 'thinking') return new THREE.Color(0xffe2b0);
+    return new THREE.Color(0xffecd0);
+  }
+  function glowHex() {
+    if (agentState === 'speaking') return 0xffffff;
+    if (agentState === 'listening') return 0x34ffc8;
+    if (agentState === 'thinking') return 0xffd28a;
+    return 0xff7700;
+  }
+
+  var t = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    var dt = 0.016;
+    var rate = agentState === 'speaking' ? 3.4
+      : (agentState === 'listening' ? 2.8
+      : (agentState === 'thinking' ? 2.4 : 2.0));
+    t += dt * (rate / 2.0);
+    var currentColor = stateColor();
+    var targetGlow = new THREE.Color(glowHex());
+
+    outerSwarm.rotation.y = t * 0.08;
+    outerSwarm.rotation.x = t * 0.04;
+    if (cage1) { cage1.rotation.y += 0.016; cage1.rotation.x -= 0.011; cage1.material.color.lerp(currentColor, 0.1); }
+
+    var pulse = 1.0 + Math.sin(t * 2.0) * 0.2;
+    if (singularity) {
+      singularity.scale.set(pulse, pulse, pulse);
+      if (agentState === 'speaking') singularity.material.color.setHex(0xffffff);
+      else if (agentState === 'listening') singularity.material.color.setHex(0xd0ffea);
+      else if (agentState === 'thinking') singularity.material.color.setHex(0xffe2b0);
+      else singularity.material.color.setHex(0xffecd0);
+    }
+    if (auraMesh) {
+      auraMesh.scale.set(pulse * 1.5, pulse * 1.5, pulse * 1.5);
+      auraMesh.material.color.copy(targetGlow);
+    }
+    if (gimbalGroup) {
+      var speed = agentState === 'speaking' ? 2.5
+        : (agentState === 'listening' ? 1.8
+        : (agentState === 'thinking' ? 1.6 : 1.0));
+      ringNodes.forEach(function (n) {
+        n.pivot.rotation.x += n.vx * speed;
+        n.pivot.rotation.y += n.vy * speed;
+        n.pivot.rotation.z += n.vz * speed;
+      });
+      ringMeshes.forEach(function (m) { m.material.color.lerp(currentColor, 0.1); });
+    }
+    var cols = outerSwarm.geometry.attributes.color.array;
+    for (var i = 0; i < cols.length; i += 3) {
+      cols[i] += (currentColor.r - cols[i]) * 0.1;
+      cols[i + 1] += (currentColor.g - cols[i + 1]) * 0.1;
+      cols[i + 2] += (currentColor.b - cols[i + 2]) * 0.1;
+    }
+    outerSwarm.geometry.attributes.color.needsUpdate = true;
+    renderer.render(scene, camera);
+
+    aura.style.backgroundColor = agentState === 'speaking'
+      ? 'rgba(255,255,255,0.5)'
+      : (agentState === 'listening' ? 'rgba(52,255,200,0.35)'
+      : (agentState === 'thinking' ? 'rgba(255,210,138,0.42)' : 'rgba(217,101,0,0.22)'));
+  }
+
+  // ── state (idle / listening / thinking / speaking) ──────────────────
+  function setStatus(s) {
+    agentState = (s === 'speaking' || s === 'listening' || s === 'thinking') ? s : 'idle';
+  }
+  (function poll() {
+    fetch('/api/status').then(function (r) { return r.json(); })
+      .then(function (j) { setStatus(j.status); }).catch(function () {});
+    setTimeout(poll, 1000);
+  })();
+  (function connectWS() {
+    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    var ws;
+    function open() {
+      ws = new WebSocket(proto + location.host + '/ws/talk');
+      ws.onmessage = function (ev) {
+        var m;
+        try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.type === 'status') setStatus(m.status);
+        else if (m.type === 'reply') setStatus('idle');
+        else if (m.type === 'error') setStatus('idle');
+      };
+      ws.onclose = function () { setTimeout(open, 3000); };
+    }
+    open();
+  })();
+
+  // ── drag (borderless window) + click-to-expand ──────────────────────
+  var dragging = false, moved = false;
+  var lastX = 0, lastY = 0, startX = 0, startY = 0;
+  function api() {
+    return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+  }
+
+  document.body.addEventListener('pointerdown', function (ev) {
+    if (ev.button !== 0) return;
+    dragging = true; moved = false;
+    startX = ev.screenX; startY = ev.screenY;
+    lastX = ev.screenX; lastY = ev.screenY;
+    document.body.classList.add('dragging');
+    try { ev.target.setPointerCapture(ev.pointerId); } catch (e) {}
+  });
+  window.addEventListener('pointermove', function (ev) {
+    if (!dragging) return;
+    var dx = ev.screenX - lastX, dy = ev.screenY - lastY;
+    if (Math.abs(ev.screenX - startX) > 6 || Math.abs(ev.screenY - startY) > 6) moved = true;
+    if (moved && (dx !== 0 || dy !== 0)) {
+      lastX = ev.screenX; lastY = ev.screenY;
+      var a = api();
+      if (a && a.move_window) a.move_window(dx, dy);
+    }
+  });
+  window.addEventListener('pointerup', function () {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove('dragging');
+    if (!moved) {
+      var a = api();
+      if (a && a.expand) a.expand();
+    }
+  });
+
+  buildOrb();
+  animate();
+})();
+</script>
+</body>
+</html>

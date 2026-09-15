@@ -1,0 +1,25 @@
+# Ra runtime dependencies (the voice assistant + retrieval stack).
+# The core RAG stack and all unit tests need ONLY the Python standard library
+# + pytest; these power the LLM brain, TTS/STT, screen OCR and device stats.
+
+# LLM providers (install the one(s) you use):
+#   Gemini (default) -> openai (client against the OpenAI-compatible endpoint)
+#   Groq             -> groq
+openai
+groq
+numpy
+sounddevice
+edge-tts
+vosk
+playsound3
+pyttsx3
+faster-whisper
+pillow
+pytesseract
+psutil
+requests
+pypdf
+
+# Dev / test
+pytest
+httpx

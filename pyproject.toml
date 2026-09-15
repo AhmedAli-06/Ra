@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ra"
+version = "1.0.0"
+description = "Ra: personal Retrieval-Augmented Virtual Assistant - voice, local-file RAG, device + consent-gated screen retrieval"
+requires-python = ">=3.10"
+dependencies = [
+    "groq",
+    "numpy",
+    "sounddevice",
+    "edge-tts",
+    "playsound",
+    "pyttsx3",
+    "SpeechRecognition",
+    "faster-whisper",
+    "pillow",
+    "pytesseract",
+    "psutil",
+    "requests",
+    "pypdf",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[project.scripts]
+ra = "ra.rag.cli:main"
+ra-app = "ra.assistant:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_default_fixture_loop_scope = "function"

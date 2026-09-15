@@ -1,0 +1,2068 @@
+<!DOCTYPE html><html lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Ra // Neural Command Interface</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&amp;family=Sora:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Sora', sans-serif;
+      background-color: #08090d;
+      color: #e1e2ec;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+    }
+    .font-mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* HUD Glow & Border Variants */
+    .hud-border {
+      border: 1px solid rgba(230, 115, 0, 0.38);
+      box-shadow: 0 0 35px rgba(217, 101, 0, 0.15), inset 0 0 20px rgba(204, 85, 0, 0.05);
+    }
+    .hud-border-listening {
+      border: 1px solid rgba(0, 255, 136, 0.55) !important;
+      box-shadow: 0 0 40px rgba(0, 255, 136, 0.28), inset 0 0 20px rgba(0, 255, 136, 0.08) !important;
+    }
+    .hud-border-speaking {
+      border: 1px solid rgba(255, 234, 121, 0.75) !important;
+      box-shadow: 0 0 50px rgba(255, 234, 121, 0.4), inset 0 0 25px rgba(255, 248, 204, 0.15) !important;
+    }
+
+    /* Subtle Tactical Scanlines */
+    .scanlines {
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.38) 50%);
+      background-size: 100% 4px;
+      pointer-events: none;
+    }
+
+    /* Audio Equalizer Bars */
+    .wave-bar {
+      transition: height 0.15s ease, background-color 0.25s ease;
+      transform-origin: bottom;
+    }
+    .wave-animated .wb-1 { animation: eqBounce 0.55s infinite ease-in-out alternate; }
+    .wave-animated .wb-2 { animation: eqBounce 0.42s infinite ease-in-out alternate 0.08s; }
+    .wave-animated .wb-3 { animation: eqBounce 0.68s infinite ease-in-out alternate 0.16s; }
+    .wave-animated .wb-4 { animation: eqBounce 0.48s infinite ease-in-out alternate 0.24s; }
+    .wave-animated .wb-5 { animation: eqBounce 0.62s infinite ease-in-out alternate 0.12s; }
+
+    @keyframes eqBounce {
+      0% { transform: scaleY(0.2); }
+      100% { transform: scaleY(1.7); }
+    }
+
+    /* Pure Floating Orb Ambient Pulse */
+    @keyframes orbAuraPulse {
+      0%, 100% { transform: scale(1); opacity: 0.55; }
+      50% { transform: scale(1.22); opacity: 0.9; }
+    }
+    .orb-aura-pulse {
+      animation: orbAuraPulse 2.8s infinite ease-in-out;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: rgba(0,0,0,0.5); }
+    ::-webkit-scrollbar-thumb { background: rgba(230,115,0,0.45); border-radius: 2px; }
+
+    /* ============================================================ */
+    /* RATIO MODES CSS: APPLIED ON #app-container */
+    /* ============================================================ */
+    #app-container {
+      transition: width 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+                  height 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+                  top 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+                  left 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+                  right 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+                  bottom 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+                  opacity 0.25s ease,
+                  border-radius 0.3s ease,
+                  background-color 0.3s ease;
+    }
+
+    /* MODE: FULL SCREEN */
+    #app-container.mode-full {
+      position: relative;
+      width: 100vw;
+      max-width: 100vw;
+      height: 100vh;
+      max-height: 100vh;
+      top: 0; left: 0; right: auto; bottom: auto;
+      transform: none;
+      opacity: 1;
+      pointer-events: auto;
+      border-radius: 0px;
+      border: none;
+      box-shadow: none;
+      background: transparent;
+      padding: 1.1rem 1.75rem 0.5rem 1.75rem;
+      z-index: 10;
+    }
+
+    /* MODE: 1/3 LATERAL DOCK (window resizes to the dock itself) */
+    #app-container.mode-dock {
+      position: fixed;
+      width: 100vw;
+      max-width: 100vw;
+      height: 100vh;
+      max-height: 100vh;
+      top: 0; left: 0; right: auto; bottom: auto;
+      transform: none;
+      opacity: 1;
+      pointer-events: auto;
+      border-radius: 0;
+      border: none;
+      box-shadow: none;
+      background: rgba(8, 9, 13, 0.97);
+      backdrop-filter: blur(32px);
+      padding: 1rem 1rem 0.6rem 1rem;
+      z-index: 30;
+    }
+
+    /* MODE: FLOATING WIDGET (window resizes to the widget card) */
+    #app-container.mode-widget {
+      position: fixed;
+      width: 100vw;
+      max-width: 100vw;
+      height: 100vh;
+      max-height: 100vh;
+      top: 0; left: 0; right: auto; bottom: auto;
+      transform: none;
+      opacity: 1;
+      pointer-events: auto;
+      border-radius: 14px;
+      border: 1px solid rgba(230,115,0,0.45);
+      box-shadow: inset 0 0 25px rgba(230,115,0,0.08);
+      background: rgba(9, 11, 16, 0.97);
+      backdrop-filter: blur(32px);
+      padding: 0.9rem 0.9rem 0.5rem 0.9rem;
+      z-index: 40;
+    }
+
+    /* MODE: ORB BUTTON COLLAPSED */
+    #app-container.mode-orb {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.92);
+      visibility: hidden;
+    }
+
+    #prompt-panel-wrapper {
+      display: flex !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+      transform: none !important;
+    }
+  </style>
+<style id="acoustic-continuous-anim" class="">@keyframes eqIdle1 { 0% { transform: scaleY(0.4); opacity: 0.75; } 50% { transform: scaleY(1.35); opacity: 1; } 100% { transform: scaleY(0.55); opacity: 0.85; } } @keyframes eqIdle2 { 0% { transform: scaleY(0.65); opacity: 0.85; } 50% { transform: scaleY(0.3); opacity: 0.7; } 100% { transform: scaleY(1.5); opacity: 1; } } @keyframes eqIdle3 { 0% { transform: scaleY(0.35); opacity: 0.7; } 50% { transform: scaleY(1.6); opacity: 1; } 100% { transform: scaleY(0.7); opacity: 0.9; } } .wave-bar { transform-origin: bottom !important; will-change: transform; } .wave-idle .wb-1 { animation: eqIdle1 1.2s infinite ease-in-out alternate !important; } .wave-idle .wb-2 { animation: eqIdle2 0.95s infinite ease-in-out alternate 0.15s !important; } .wave-idle .wb-3 { animation: eqIdle3 1.35s infinite ease-in-out alternate 0.08s !important; } .wave-idle .wb-4 { animation: eqIdle1 1.05s infinite ease-in-out alternate 0.22s !important; } .wave-idle .wb-5 { animation: eqIdle2 1.28s infinite ease-in-out alternate 0.12s !important; } .wave-animated .wb-1 { animation: eqBounce 0.42s infinite ease-in-out alternate !important; } .wave-animated .wb-2 { animation: eqBounce 0.32s infinite ease-in-out alternate 0.05s !important; } .wave-animated .wb-3 { animation: eqBounce 0.48s infinite ease-in-out alternate 0.1s !important; } .wave-animated .wb-4 { animation: eqBounce 0.36s infinite ease-in-out alternate 0.14s !important; } .wave-animated .wb-5 { animation: eqBounce 0.44s infinite ease-in-out alternate 0.08s !important; }</style></head>
+<body class="relative w-screen h-screen overflow-hidden select-none bg-[#08090d]">
+<!-- Deep Solar Field Atmosphere -->
+<div class="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(217,101,0,0.22)_0%,rgba(8,9,13,0.98)_72%)] z-0 transition-all duration-700" id="radialAtmosphere"></div>
+<!-- ROOT APP CONTAINER (Full, Dock, Widget, or Orb states) -->
+<div class="w-screen h-screen overflow-hidden bg-transparent text-white flex flex-col justify-between relative z-10 mode-full" id="app-container">
+<!-- TOP NAVIGATION / HEADER (Fixed at top, flex-shrink-0) -->
+<header class="w-full flex items-center justify-between pb-3 border-b border-[#e67300]/25 z-40 flex-shrink-0 gap-2" id="hudHeader">
+<!-- Moniker & Telemetry -->
+<div class="flex items-center space-x-2.5 shrink-0">
+<div class="w-2.5 h-2.5 rounded-full bg-[#ff7700] shadow-[0_0_14px_#ff7700] transition-colors duration-300 animate-pulse" id="coreStatusDot"></div>
+<div>
+<div class="flex items-center space-x-1.5">
+<span class="font-mono tracking-[0.22em] text-sm md:text-base font-extrabold text-[#ff8c00] transition-colors duration-300" id="monikerText">Ra</span>
+</div>
+
+</div>
+</div>
+<!-- RATIO CONTROLS (Full, 1/3 Dock, Widget, Orb) -->
+<div class="flex items-center p-0.5 md:p-1 bg-black/80 backdrop-blur-md rounded-lg border border-[#e67300]/30 space-x-0.5 md:space-x-1 shrink-0 overflow-x-auto" id="ratioControlBar">
+<button class="px-2.5 md:px-3 py-1 text-[10px] md:text-[11px] font-mono rounded transition-all bg-[#e67300] text-black font-semibold shadow-[0_0_12px_rgba(230,115,0,0.4)] whitespace-nowrap" id="btnModeFull" onclick="setWindowMode('full')" style="animation-delay: 7ms;">
+          Full
+        </button>
+<button class="px-2.5 md:px-3 py-1 text-[10px] md:text-[11px] font-mono rounded transition-all text-zinc-400 hover:text-[#e67300] hover:bg-amber-950/40 whitespace-nowrap" id="btnModeDock" onclick="setWindowMode('dock')" style="animation-delay: 7ms;">Dock
+        </button>
+<button class="px-2.5 md:px-3 py-1 text-[10px] md:text-[11px] font-mono rounded transition-all text-zinc-400 hover:text-[#e67300] hover:bg-amber-950/40 whitespace-nowrap" id="btnModeWidget" onclick="setWindowMode('widget')" style="animation-delay: 7ms;">
+          Widget
+        </button>
+<button class="px-2.5 md:px-3 py-1 text-[10px] md:text-[11px] font-mono rounded transition-all text-zinc-400 hover:text-[#e67300] hover:bg-amber-950/40 whitespace-nowrap" id="btnModeOrb" onclick="setWindowMode('orb')" style="animation-delay: 7ms;">
+          Orb
+        </button>
+</div>
+<!-- RIGHT UTILITY HUD CONTROLS -->
+<div class="flex items-center space-x-2 shrink-0" id="headerRightControls">
+<button class="flex items-center space-x-1 px-2.5 py-1 rounded bg-black/60 hover:bg-amber-950/50 border border-[#e67300]/30 text-[10px] md:text-[11px] font-mono text-zinc-300 hover:text-[#e67300] transition-colors" id="micModeButton" onclick="toggleMicMode()" title="Switch between continuous listening and push-to-talk">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<span class="hidden lg:inline" id="micModeLabel">PTT</span>
+</button>
+<button class="p-1.5 rounded bg-black/60 hover:bg-amber-950/50 border border-[#e67300]/30 text-zinc-300 hover:text-[#e67300] transition-colors" onclick="toggleModal('settingsModal')" title="Settings">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</button>
+<button class="p-1.5 rounded bg-black/60 hover:bg-amber-950/50 border border-[#e67300]/30 text-zinc-300 hover:text-[#e67300] transition-colors" onclick="hudMinimize()" title="Minimize">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 12h14" stroke-linecap="round" stroke-width="2"></path></svg>
+</button>
+<button class="p-1.5 rounded bg-black/60 hover:bg-red-950/60 border border-[#e67300]/30 text-zinc-300 hover:text-red-400 transition-colors" onclick="hudClose()" title="Close">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" stroke-width="2"></path></svg>
+</button>
+</div>
+</header>
+<!-- 3D WORKSPACE VIEWPORT: CENTRALLY SUSPENDED HIGH-COMPLEXITY SOLAR NEURAL CORE -->
+<main class="relative flex-1 w-full flex items-center justify-center overflow-hidden pointer-events-auto" id="canvas-container">
+<div class="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing flex items-center justify-center z-10" id="threejsMount"><canvas width="621" height="1114" style="display: block; width: 497.2px; height: 891.9px;"></canvas></div>
+</main>
+<!-- CHAT HISTORY + TOOLS -->
+<section class="w-full flex-shrink-0 flex flex-col items-center px-2 md:px-4 z-40 pointer-events-none" id="chatSection">
+  <div class="w-full max-w-3xl mx-auto max-h-[26vh] min-h-[40px] overflow-y-auto space-y-2 py-2 pointer-events-auto" id="chatPanel">
+    <div class="text-[10px] font-mono text-zinc-500 px-1">Ra neural interface ready.</div>
+  </div>
+  <!-- Tools: one compact button opens a small chip grid (no permanent clutter) -->
+  <div class="w-full max-w-3xl mx-auto flex flex-col items-center pointer-events-auto" id="quickActionBar">
+    <button class="text-[9px] md:text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-black/60 hover:bg-amber-950/50 border border-[#e67300]/25 text-zinc-300 hover:text-[#ff8c00] transition-colors" id="quickToolsToggle" onclick="toggleQuickTools()">TOOLS ▾</button>
+    <div class="hidden w-full max-w-xl mx-auto flex-wrap justify-center gap-1.5 py-1.5" id="quickToolsGrid"></div>
+  </div>
+</section>
+<!-- PROMPT PANEL WRAPPER: Anchored hard against bottom edge -->
+<footer class="flex-shrink-0 z-50 w-full flex flex-col items-center justify-end pb-2 md:pb-2.5 px-2 md:px-4 pt-0 transition-all duration-300 mb-0" id="prompt-panel-wrapper" style="display: flex !important; opacity: 1 !important; visibility: visible !important; transform: none !important;">
+<!-- Main Prompt Bar Box -->
+<div class="w-full max-w-3xl mx-auto flex items-center bg-[#090b10]/95 backdrop-blur-2xl rounded-xl p-1.5 pl-2.5 hud-border shadow-[0_12px_45px_rgba(0,0,0,0.96)] transition-all duration-300 pointer-events-auto" id="prompt-panel" style="max-width: 100%; padding: 0.375rem 0.375rem 0.375rem 0.5rem;">
+<!-- SHARP-LEFT STATIC SOUNDWAVE EQUALIZER & MIC BUTTON -->
+<div class="flex items-center space-x-2 mr-2 pr-2 border-r border-[#e67300]/30 shrink-0" id="eqDivider">
+<!-- Mic Toggle -->
+<button class="relative p-1.5 md:p-2 rounded-lg bg-amber-950/40 hover:bg-[#e67300]/20 text-[#ff8c00] hover:text-amber-300 transition-all duration-200 border border-[#e67300]/30 shrink-0" id="micButton" onclick="toggleListening()" title="Click or Press [SPACE] to Speak">
+<svg class="w-3.5 h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 opacity-0 transition-opacity duration-200 shadow-[0_0_6px_#00ff88]" id="micLiveBeacon"></span>
+</button>
+<!-- 5-BAR AUDIO EQUALIZER (STRICTLY STATIC IN IDLE) -->
+<div class="flex items-end space-x-1 h-4 md:h-5 px-0.5 pb-0.5" id="acousticEqualizer" title="Neural Acoustic Waveform">
+<span class="wave-bar wb-1 w-0.5 md:w-1 bg-[#ff7700] rounded-full h-1.5 transition-colors duration-300"></span>
+<span class="wave-bar wb-2 w-0.5 md:w-1 bg-[#ffaa00] rounded-full h-2.5 md:h-3 transition-colors duration-300"></span>
+<span class="wave-bar wb-3 w-0.5 md:w-1 bg-[#ff7700] rounded-full h-3.5 md:h-4.5 transition-colors duration-300"></span>
+<span class="wave-bar wb-4 w-0.5 md:w-1 bg-[#ffaa00] rounded-full h-2 md:h-2.5 transition-colors duration-300"></span>
+<span class="wave-bar wb-5 w-0.5 md:w-1 bg-[#ff7700] rounded-full h-1.5 transition-colors duration-300"></span>
+</div>
+<!-- STOP BUTTON (shown only while Ra is thinking/speaking) -->
+<button class="p-1.5 rounded-lg bg-red-950/50 hover:bg-red-900/60 text-red-400 hover:text-red-300 border border-red-500/40 transition-all duration-200 shrink-0 hidden" id="stopButton" onclick="sendStop()" title="Stop Ra">
+<svg class="w-3.5 h-3.5 md:w-4 md:h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"></rect></svg>
+</button>
+</div>
+<!-- INPUT DIRECTIVE FIELD -->
+<input class="flex-1 min-w-0 bg-transparent border-none outline-none font-mono text-xs md:text-sm text-zinc-100 placeholder-zinc-500 focus:placeholder-zinc-400 px-1 md:px-2" id="promptInput" onkeydown="if(event.key==='Enter') sendPrompt()" placeholder="Ask Ra — play music, time, news, memory, tasks, screen…" type="text">
+<!-- ENGAGE BUTTON -->
+<button class="flex items-center space-x-1 md:space-x-1.5 px-3.5 md:px-4 py-1.5 md:py-2 rounded-lg bg-gradient-to-r from-[#d96500] via-[#ff7700] to-[#d96500] hover:brightness-115 text-black font-semibold text-xs tracking-wider transition-all duration-200 shadow-[0_0_18px_rgba(230,115,0,0.38)] shrink-0" id="engageBtn" onclick="sendPrompt()">
+<span class="font-mono text-[10px] md:text-[11px] font-bold">ASK RA</span>
+<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M14 5l7 7m0 0l-7 7m7-7H3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"></path></svg>
+</button>
+</div>
+</footer>
+</div>
+<!-- SUBTITLE CAPTIONS (spoken exchange, toggleable in settings) -->
+<div class="fixed bottom-40 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1 pointer-events-none w-[min(92vw,560px)]" id="subtitleStrip" style="display:none;">
+<div class="px-3 py-1.5 rounded-lg bg-black/75 backdrop-blur-md border border-[#e67300]/35 text-[10px] font-mono leading-snug max-w-full">
+<span class="text-emerald-400 font-bold">YOU</span><span class="text-zinc-500"> » </span><span class="text-zinc-300" id="subtitleUser"></span>
+</div>
+<div class="px-3 py-1.5 rounded-lg bg-black/75 backdrop-blur-md border border-[#ff8c00]/45 text-[10px] font-mono leading-snug max-w-full">
+<span class="text-[#ff8c00] font-bold">RA</span><span class="text-zinc-500"> » </span><span class="text-[#ffe1b3]" id="subtitleRa"></span>
+</div>
+</div>
+<!-- PURE FLOATING 3D ORB BUTTON (ORB MODE) -->
+<div class="fixed bottom-7 right-7 z-50 hidden transition-all duration-300" id="floatingOrbOverlay">
+<div class="relative group cursor-pointer flex items-center justify-center select-none" id="miniOrbBeacon" onclick="handleOrbClick(event)" title="Click to expand to Full HUD // Voice active">
+<div class="absolute w-44 h-44 rounded-full bg-[#d96500]/25 blur-2xl orb-aura-pulse pointer-events-none transition-all duration-500" id="pureOrbAura"></div>
+<div class="absolute w-44 h-44 rounded-full border border-emerald-400/40 opacity-0 scale-95 transition-all duration-300 pointer-events-none" id="pureOrbRipple"></div>
+<!-- 3D Mini Solar Neural Orb Canvas -->
+<div class="w-44 h-44 relative rounded-full overflow-hidden flex items-center justify-center transition-transform duration-300 group-hover:scale-105 pointer-events-auto" id="miniThreejsMount"></div>
+<!-- Subtle hover badge tooltip -->
+<div class="absolute -top-8 right-1/2 translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap bg-black/85 backdrop-blur-md px-3 py-1 rounded-full border border-[#e67300]/40 text-[9px] font-mono text-[#ff8c00] shadow-[0_0_12px_rgba(0,0,0,0.8)] tracking-wide">
+        Click to expand
+      </div>
+</div>
+</div>
+<!-- SYSTEM LOGS MODAL -->
+<div class="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center hidden p-4" id="logsModal">
+<div class="w-full max-w-md bg-[#090b10] border border-[#e67300]/35 rounded-xl p-4 shadow-[0_0_45px_rgba(0,0,0,0.95)] hud-border flex flex-col">
+<div class="flex items-center justify-between pb-2 border-b border-[#e67300]/25">
+<div class="flex items-center space-x-2">
+<span class="w-2 h-2 rounded-full bg-[#ff7700] shadow-[0_0_8px_#ff7700]"></span>
+<h3 class="font-mono text-xs font-bold text-[#ff8c00] tracking-wider">SYSTEM LOGS // TELEMETRY</h3>
+</div>
+<button class="text-zinc-400 hover:text-zinc-200 text-xs font-mono" onclick="toggleModal('logsModal')">✕ ESC</button>
+</div>
+<div class="flex-1 overflow-y-auto max-h-56 py-3 space-y-2 font-mono text-[11px]">
+<div class="flex items-start space-x-2 text-zinc-400">
+<span class="text-zinc-500">14:02:08</span>
+<span class="text-[#ff8c00]">[CORE]</span>
+<span class="">Symmetrical Fibonacci lattice initialized in balanced solar amber mode (2600 nodes).</span>
+</div>
+<div class="flex items-start space-x-2 text-zinc-400">
+<span class="text-zinc-500">14:02:09</span>
+<span class="text-emerald-400">[AUDIO]</span>
+<span class="">Acoustic sub-carrier listening online (48 kHz).</span>
+</div>
+<div class="flex items-start space-x-2 text-zinc-400">
+<span class="text-zinc-500">14:02:11</span>
+<span class="text-[#ff8c00]">[GIMBAL]</span>
+<span class="">5 Concentric armillary gimbal axes synchronized &amp; calibrated.</span>
+</div>
+<div class="flex items-start space-x-2 text-zinc-400">
+<span class="text-zinc-500">14:02:15</span>
+<span class="text-yellow-300">[ASTRO]</span>
+<span class="">Equatorial celestial coordinate rings aligned to solar epoch.</span>
+</div>
+</div>
+<div class="pt-2 border-t border-[#e67300]/20 flex justify-between text-[10px] font-mono text-zinc-400">
+<span class="">STATUS: SYSTEM NOMINAL</span>
+<button class="hover:text-[#ff8c00] transition-colors" onclick="clearLogs()">CLEAR BUFFER</button>
+</div>
+</div>
+</div>
+<!-- SETTINGS MODAL -->
+<div class="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center hidden p-4" id="settingsModal">
+<div class="w-full max-w-sm bg-[#090b10] border border-[#e67300]/35 rounded-xl p-4 shadow-[0_0_45px_rgba(0,0,0,0.95)] hud-border">
+<div class="flex items-center justify-between pb-2 border-b border-[#e67300]/25">
+<h3 class="font-mono text-xs font-bold text-[#ff8c00] tracking-wider">RA TACTICAL SETTINGS</h3>
+<button class="text-zinc-400 hover:text-zinc-200 text-xs font-mono" onclick="toggleModal('settingsModal')">✕ ESC</button>
+</div>
+<div class="py-3 space-y-3 font-mono text-xs">
+<div>
+<label class="text-[10px] text-zinc-400 block mb-1">WAKE WORDS (comma separated)</label>
+<input class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-100 focus:outline-none focus:border-[#e67300]" id="settingWakeWords" placeholder="fire up,ra">
+</div>
+<div class="flex items-center justify-between pt-1">
+<span class="text-zinc-300">ALWAYS-ON CONTINUOUS LISTEN</span>
+<input checked="" class="accent-[#ff8c00] w-4 h-4 cursor-pointer" id="settingContinuous" type="checkbox">
+</div>
+<div class="flex items-center justify-between pt-1">
+<span class="text-zinc-300">HANDS-FREE CONVERSATION (NO WAKE WORD)</span>
+<input class="accent-[#ff8c00] w-4 h-4 cursor-pointer" id="settingVoiceConversation" type="checkbox">
+</div>
+<div class="flex items-center justify-between pt-1">
+<span class="text-zinc-300">PC CONTROL CONSENT</span>
+<input class="accent-[#ff8c00] w-4 h-4 cursor-pointer" id="settingComputerAccess" type="checkbox">
+</div>
+<div class="flex items-center justify-between pt-1">
+<span class="text-zinc-300">SUBTITLES (SHOW SPOKEN EXCHANGE)</span>
+<input checked="" class="accent-[#ff8c00] w-4 h-4 cursor-pointer" id="settingSubtitles" type="checkbox">
+</div>
+<div>
+<label class="text-[10px] text-zinc-400 block mb-1">TTS VOICE</label>
+<select class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-100 focus:outline-none focus:border-[#e67300]" id="settingTtsVoice">
+<option value="en-GB-RyanNeural">en-GB-RyanNeural</option>
+<option value="en-US-GuyNeural">en-US-GuyNeural</option>
+<option value="en-US-JennyNeural">en-US-JennyNeural</option>
+<option value="en-GB-SoniaNeural">en-GB-SoniaNeural</option>
+<option value="en-US-AriaNeural">en-US-AriaNeural</option>
+</select>
+</div>
+<div class="flex items-center justify-between pt-1 text-zinc-500" id="settingStatusLine">
+<span class="text-[10px]">loading…</span>
+</div>
+</div>
+<div class="pt-2 border-t border-[#e67300]/20 flex justify-end">
+<button class="px-3 py-1 bg-[#ff8c00] hover:bg-[#d96500] text-black font-semibold text-xs font-mono rounded" onclick="applySettings()">APPLY</button>
+</div>
+</div>
+</div>
+<!-- THREE.JS ENGINE & ARCHITECTURAL SCRIPT -->
+<script>
+    // --- 1. THREE.JS 3D SOLAR NEURAL CORE ---
+    let scene, camera, renderer;
+    let outerSwarm, innerSwarm, coronaPoints, astrolabePoints;
+    let synapticLines;
+    let cage1, cage2, cage3;
+    let gimbalGroup;
+    let neuralCoreGroup;
+    let ringNodes = [];
+    let ringMeshes = [];
+    let cageMeshes = [];
+    let astrolabeMeshes = [];
+    let coreSingularity, auraMesh, flareMesh;
+
+    // --- MINIATURE 3D SOLAR NEURAL ORB ---
+    let miniScene, miniCamera, miniRenderer;
+    let miniCoreGroup;
+    let miniOuterSwarm, miniSingularity, miniAuraMesh;
+    let miniCage1;
+    let miniGimbalGroup;
+    let miniRingNodes = [];
+    let miniRingMeshes = [];
+
+    // Elevated complexity counts
+    const outerNodeCount = 2600;
+    const innerNodeCount = 900;
+    const coronaCount = 600;
+    const astrolabeCount = 360;
+
+    let outerPositions, outerBase, outerColors;
+    let innerPositions, innerBase, innerColors;
+    let coronaPositions, coronaBase, coronaSpeeds, coronaAngles;
+    let astrolabePositions, astrolabeBase;
+
+    const clock = new THREE.Clock();
+    let agentState = 'idle'; // 'idle' | 'listening' | 'thinking' | 'speaking'
+    let currentScale = 1.0;
+    let targetScale = 1.0;
+    let wobbleIntensity = 0.14;
+    let targetWobble = 0.14;
+    let speakTimeoutId = null;
+
+    // Solar amber idle tone (#ff7700 / #d96500)
+    let currentColor = new THREE.Color(0xff7700);
+
+    // Mouse Parallax
+    let mouseX = 0, mouseY = 0;
+    let rotX = 0, rotY = 0;
+
+    function createGlowDotTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64; canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+      grad.addColorStop(0.18, 'rgba(255, 240, 180, 0.95)');
+      grad.addColorStop(0.45, 'rgba(255, 140, 0, 0.85)');
+      grad.addColorStop(0.75, 'rgba(217, 85, 0, 0.35)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 64, 64);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    function initThree() {
+      const mount = document.getElementById('threejsMount');
+      if (!mount) return;
+
+      const rect = mount.getBoundingClientRect();
+      const w = rect.width || window.innerWidth;
+      const h = rect.height || (window.innerHeight - 130);
+
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(45, Math.max(w, 1) / Math.max(h, 1), 0.1, 2500);
+      camera.position.set(0, 0, 235);
+      camera.lookAt(0, 0, 0);
+
+      neuralCoreGroup = new THREE.Group();
+      neuralCoreGroup.position.set(0, 0, 0);
+      neuralCoreGroup.scale.set(1.0, 1.0, 1.0);
+      scene.add(neuralCoreGroup);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+      renderer.setSize(Math.max(w, 1), Math.max(h, 1));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setClearColor(0x000000, 0);
+      mount.innerHTML = '';
+      mount.appendChild(renderer.domElement);
+
+      const dotTex = createGlowDotTexture();
+
+      // Outer Fibonacci Sphere: Exact Hemispherical Symmetry (2,600 nodes)
+      outerPositions = new Float32Array(outerNodeCount * 3);
+      outerBase = new Float32Array(outerNodeCount * 3);
+      outerColors = new Float32Array(outerNodeCount * 3);
+
+      const goldenRatio = (1 + Math.sqrt(5)) / 2;
+      const goldenAngle = 2 * Math.PI * (1 - 1 / goldenRatio);
+
+      for (let i = 0; i < outerNodeCount; i++) {
+        // True uniform spherical distribution across top and bottom hemispheres
+        const phi = Math.acos(1 - 2 * (i + 0.5) / outerNodeCount);
+        const theta = goldenAngle * i;
+        const rNoise = 64 * (1 + ((i % 9) - 4) * 0.012);
+
+        const x = rNoise * Math.sin(phi) * Math.cos(theta);
+        const y = rNoise * Math.cos(phi);
+        const z = rNoise * Math.sin(phi) * Math.sin(theta);
+
+        outerPositions[i * 3] = outerBase[i * 3] = x;
+        outerPositions[i * 3 + 1] = outerBase[i * 3 + 1] = y;
+        outerPositions[i * 3 + 2] = outerBase[i * 3 + 2] = z;
+
+        outerColors[i * 3] = 1.0;
+        outerColors[i * 3 + 1] = 0.52;
+        outerColors[i * 3 + 2] = 0.05;
+      }
+
+      const outerGeo = new THREE.BufferGeometry();
+      outerGeo.setAttribute('position', new THREE.BufferAttribute(outerPositions, 3));
+      outerGeo.setAttribute('color', new THREE.BufferAttribute(outerColors, 3));
+      const outerMat = new THREE.PointsMaterial({
+        size: 3.4,
+        map: dotTex,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      outerSwarm = new THREE.Points(outerGeo, outerMat);
+      neuralCoreGroup.add(outerSwarm);
+
+      // Inner Fibonacci Nucleus: Concentrated 900-node inner core
+      innerPositions = new Float32Array(innerNodeCount * 3);
+      innerBase = new Float32Array(innerNodeCount * 3);
+      innerColors = new Float32Array(innerNodeCount * 3);
+
+      for (let i = 0; i < innerNodeCount; i++) {
+        const phi = Math.acos(1 - 2 * (i + 0.5) / innerNodeCount);
+        const theta = goldenAngle * (i + 71);
+        const rNoise = 36 * (1 + ((i % 7) - 3) * 0.015);
+
+        const x = rNoise * Math.sin(phi) * Math.cos(theta);
+        const y = rNoise * Math.cos(phi);
+        const z = rNoise * Math.sin(phi) * Math.sin(theta);
+
+        innerPositions[i * 3] = innerBase[i * 3] = x;
+        innerPositions[i * 3 + 1] = innerBase[i * 3 + 1] = y;
+        innerPositions[i * 3 + 2] = innerBase[i * 3 + 2] = z;
+
+        innerColors[i * 3] = 1.0;
+        innerColors[i * 3 + 1] = 0.7;
+        innerColors[i * 3 + 2] = 0.15;
+      }
+
+      const innerGeo = new THREE.BufferGeometry();
+      innerGeo.setAttribute('position', new THREE.BufferAttribute(innerPositions, 3));
+      innerGeo.setAttribute('color', new THREE.BufferAttribute(innerColors, 3));
+      const innerMat = new THREE.PointsMaterial({
+        size: 2.8,
+        map: dotTex,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      innerSwarm = new THREE.Points(innerGeo, innerMat);
+      neuralCoreGroup.add(innerSwarm);
+
+      // Symmetrical Coronal Solar Dust Halo & Golden Spiral Filaments
+      coronaPositions = new Float32Array(coronaCount * 3);
+      coronaBase = new Float32Array(coronaCount * 3);
+      coronaSpeeds = new Float32Array(coronaCount);
+      coronaAngles = new Float32Array(coronaCount);
+
+      for (let i = 0; i < coronaCount; i++) {
+        const phi = Math.acos(1 - 2 * (i + 0.5) / coronaCount);
+        const theta = goldenAngle * i * 1.8;
+        const rad = 88 + (i % 8) * 3.5;
+
+        const x = rad * Math.sin(phi) * Math.cos(theta);
+        const y = rad * Math.cos(phi);
+        const z = rad * Math.sin(phi) * Math.sin(theta);
+
+        coronaPositions[i * 3] = coronaBase[i * 3] = x;
+        coronaPositions[i * 3 + 1] = coronaBase[i * 3 + 1] = y;
+        coronaPositions[i * 3 + 2] = coronaBase[i * 3 + 2] = z;
+
+        coronaSpeeds[i] = (0.25 + (i % 6) * 0.12) * (i % 2 === 0 ? 1 : -1);
+        coronaAngles[i] = theta;
+      }
+
+      const coronaGeo = new THREE.BufferGeometry();
+      coronaGeo.setAttribute('position', new THREE.BufferAttribute(coronaPositions, 3));
+      const coronaMat = new THREE.PointsMaterial({
+        size: 2.4,
+        color: 0xff8c00,
+        map: dotTex,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      coronaPoints = new THREE.Points(coronaGeo, coronaMat);
+      neuralCoreGroup.add(coronaPoints);
+
+      // Celestial Astrolabe Ring Points
+      astrolabePositions = new Float32Array(astrolabeCount * 3);
+      astrolabeBase = new Float32Array(astrolabeCount * 3);
+      for (let i = 0; i < astrolabeCount; i++) {
+        const angle = (i / astrolabeCount) * Math.PI * 2;
+        const r = 94;
+        const x = Math.cos(angle) * r;
+        const z = Math.sin(angle) * r;
+        astrolabePositions[i * 3] = astrolabeBase[i * 3] = x;
+        astrolabePositions[i * 3 + 1] = astrolabeBase[i * 3 + 1] = 0;
+        astrolabePositions[i * 3 + 2] = astrolabeBase[i * 3 + 2] = z;
+      }
+      const astrolabeGeo = new THREE.BufferGeometry();
+      astrolabeGeo.setAttribute('position', new THREE.BufferAttribute(astrolabePositions, 3));
+      const astrolabeMat = new THREE.PointsMaterial({
+        size: 2.2,
+        color: 0xff9900,
+        map: dotTex,
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      astrolabePoints = new THREE.Points(astrolabeGeo, astrolabeMat);
+      neuralCoreGroup.add(astrolabePoints);
+
+      // Symmetrical Synaptic Filaments
+      const maxLines = 1800;
+      const linePositions = new Float32Array(maxLines * 6);
+      const lineColors = new Float32Array(maxLines * 6);
+      const lineGeo = new THREE.BufferGeometry();
+      lineGeo.setAttribute('position', new THREE.BufferAttribute(linePositions, 3).setUsage(THREE.DynamicDrawUsage));
+      lineGeo.setAttribute('color', new THREE.BufferAttribute(lineColors, 3).setUsage(THREE.DynamicDrawUsage));
+      const lineMat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.65,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      synapticLines = new THREE.LineSegments(lineGeo, lineMat);
+      neuralCoreGroup.add(synapticLines);
+
+      // Concentric Geodesic Wireframe Cages Centered at (0,0,0)
+      function makeWireCage(radius, detail, color, opacity) {
+        const g = new THREE.IcosahedronGeometry(radius, detail);
+        const m = new THREE.MeshBasicMaterial({
+          color: color,
+          wireframe: true,
+          transparent: true,
+          opacity: opacity,
+          blending: THREE.AdditiveBlending
+        });
+        const mesh = new THREE.Mesh(g, m);
+        mesh.position.set(0, 0, 0);
+        cageMeshes.push(mesh);
+        return mesh;
+      }
+      cage1 = makeWireCage(28, 2, 0xff7700, 0.42);
+      cage2 = makeWireCage(35, 1, 0xd96500, 0.32);
+      cage3 = makeWireCage(19, 1, 0xffaa00, 0.55);
+      neuralCoreGroup.add(cage1);
+      neuralCoreGroup.add(cage2);
+      neuralCoreGroup.add(cage3);
+
+      // Central Glowing Fusion Nucleus Core & Auras (0,0,0)
+      const solidCoreGeo = new THREE.SphereGeometry(9.5, 32, 32);
+      const solidCoreMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.98,
+        blending: THREE.AdditiveBlending
+      });
+      coreSingularity = new THREE.Mesh(solidCoreGeo, solidCoreMat);
+      coreSingularity.position.set(0, 0, 0);
+      neuralCoreGroup.add(coreSingularity);
+
+      const auraGeo = new THREE.SphereGeometry(16.5, 32, 32);
+      const auraMat = new THREE.MeshBasicMaterial({
+        color: 0xff7700,
+        transparent: true,
+        opacity: 0.5,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide
+      });
+      auraMesh = new THREE.Mesh(auraGeo, auraMat);
+      auraMesh.position.set(0, 0, 0);
+      neuralCoreGroup.add(auraMesh);
+
+      // Outer Solar Flare Halo
+      const flareGeo = new THREE.SphereGeometry(22, 24, 24);
+      const flareMat = new THREE.MeshBasicMaterial({
+        color: 0xd96500,
+        transparent: true,
+        opacity: 0.25,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide
+      });
+      flareMesh = new THREE.Mesh(flareGeo, flareMat);
+      flareMesh.position.set(0, 0, 0);
+      neuralCoreGroup.add(flareMesh);
+
+      // Concentric Multi-Axis Armillary Gimbal Rings (5 concentric rings)
+      gimbalGroup = new THREE.Group();
+      gimbalGroup.position.set(0, 0, 0);
+      ringNodes = [];
+      ringMeshes = [];
+
+      function buildGimbalRing(radius, tube, color, opacity, tickCount, rx, ry, rz) {
+        const ringPivot = new THREE.Group();
+        ringPivot.position.set(0, 0, 0);
+
+        const ringObj = new THREE.Group();
+        ringObj.position.set(0, 0, 0);
+
+        const ringGeo = new THREE.TorusGeometry(radius, tube, 16, 128);
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: color,
+          transparent: true,
+          opacity: opacity,
+          blending: THREE.AdditiveBlending
+        });
+        const mainTorus = new THREE.Mesh(ringGeo, ringMat);
+        ringObj.add(mainTorus);
+        ringMeshes.push(mainTorus);
+
+        // Precision Astrolabe Tick-Marks
+        if (tickCount > 0) {
+          const tickGeo = new THREE.BoxGeometry(0.7, tube * 3.8, 1.6);
+          const tickMat = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: Math.min(1.0, opacity + 0.25),
+            blending: THREE.AdditiveBlending
+          });
+          ringMeshes.push(tickMat);
+          for (let k = 0; k < tickCount; k++) {
+            const angle = (k / tickCount) * Math.PI * 2;
+            const tick = new THREE.Mesh(tickGeo, tickMat);
+            tick.position.set(Math.cos(angle) * radius, Math.sin(angle) * radius, 0);
+            tick.rotation.z = angle;
+            ringObj.add(tick);
+          }
+        }
+
+        ringPivot.add(ringObj);
+        gimbalGroup.add(ringPivot);
+
+        ringNodes.push({
+          pivot: ringPivot,
+          vx: rx,
+          vy: ry,
+          vz: rz,
+          baseRadius: radius
+        });
+
+        return ringPivot;
+      }
+
+      // 5 Concentric Armillary Gimbal Rings with Independent Axes & Momentums
+      buildGimbalRing(82, 0.48, 0xff8c00, 0.8, 24, 0.005, 0.009, 0.004);
+      buildGimbalRing(86, 0.45, 0xd96500, 0.7, 18, -0.008, 0.006, 0.005);
+      buildGimbalRing(90, 0.42, 0xcc5500, 0.65, 20, 0.007, -0.007, -0.005);
+      buildGimbalRing(98, 0.38, 0xffaa00, 0.6, 32, 0.004, 0.006, -0.008);
+      buildGimbalRing(72, 0.48, 0xff7700, 0.7, 16, -0.007, -0.006, 0.009);
+
+      neuralCoreGroup.add(gimbalGroup);
+
+      // Initialize Mini Orb for collapsed Orb mode
+      initMiniThree(dotTex);
+
+      // Mouse Parallax listener
+      window.addEventListener('mousemove', (e) => {
+        mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+        mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+      });
+
+      // Resize observer
+      const ro = new ResizeObserver(() => {
+        updateViewportSize();
+      });
+      ro.observe(mount);
+      window.addEventListener('resize', updateViewportSize);
+
+      animate();
+    }
+
+    // --- MINIATURE 3D SOLAR NEURAL ORB ENGINE ---
+    function initMiniThree(dotTex) {
+      const mount = document.getElementById('miniThreejsMount');
+      if (!mount) return;
+      const w = 176;
+      const h = 176;
+
+      miniScene = new THREE.Scene();
+      miniCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+      miniCamera.position.set(0, 0, 140);
+      miniCamera.lookAt(0, 0, 0);
+
+      miniCoreGroup = new THREE.Group();
+      miniCoreGroup.position.set(0, 0, 0);
+      miniScene.add(miniCoreGroup);
+
+      miniRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+      miniRenderer.setSize(w, h);
+      miniRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      miniRenderer.setClearColor(0x000000, 0);
+      mount.innerHTML = '';
+      mount.appendChild(miniRenderer.domElement);
+
+      const miniCount = 520;
+      const miniPos = new Float32Array(miniCount * 3);
+      const miniCol = new Float32Array(miniCount * 3);
+      const goldenRatio = (1 + Math.sqrt(5)) / 2;
+      const goldenAngle = 2 * Math.PI * (1 - 1 / goldenRatio);
+
+      for (let i = 0; i < miniCount; i++) {
+        const phi = Math.acos(1 - 2 * (i + 0.5) / miniCount);
+        const theta = goldenAngle * i;
+        const r = 35 * (1 + ((i % 5) - 2) * 0.02);
+
+        miniPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+        miniPos[i * 3 + 1] = r * Math.cos(phi);
+        miniPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+
+        miniCol[i * 3] = 1.0;
+        miniCol[i * 3 + 1] = 0.52;
+        miniCol[i * 3 + 2] = 0.05;
+      }
+
+      const miniSwarmGeo = new THREE.BufferGeometry();
+      miniSwarmGeo.setAttribute('position', new THREE.BufferAttribute(miniPos, 3));
+      miniSwarmGeo.setAttribute('color', new THREE.BufferAttribute(miniCol, 3));
+      const miniSwarmMat = new THREE.PointsMaterial({
+        size: 3.2,
+        map: dotTex,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      miniOuterSwarm = new THREE.Points(miniSwarmGeo, miniSwarmMat);
+      miniCoreGroup.add(miniOuterSwarm);
+
+      // Mini Wireframe Cage
+      const miniCageGeo = new THREE.IcosahedronGeometry(20, 1);
+      const miniCageMat = new THREE.MeshBasicMaterial({
+        color: 0xff7700,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.45,
+        blending: THREE.AdditiveBlending
+      });
+      miniCage1 = new THREE.Mesh(miniCageGeo, miniCageMat);
+      miniCage1.position.set(0, 0, 0);
+      miniCoreGroup.add(miniCage1);
+
+      // Mini Singularity & Aura
+      const miniSingGeo = new THREE.SphereGeometry(6, 16, 16);
+      const miniSingMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.98,
+        blending: THREE.AdditiveBlending
+      });
+      miniSingularity = new THREE.Mesh(miniSingGeo, miniSingMat);
+      miniSingularity.position.set(0, 0, 0);
+      miniCoreGroup.add(miniSingularity);
+
+      const miniAuraGeo = new THREE.SphereGeometry(10.5, 16, 16);
+      const miniAuraMat = new THREE.MeshBasicMaterial({
+        color: 0xff7700,
+        transparent: true,
+        opacity: 0.5,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide
+      });
+      miniAuraMesh = new THREE.Mesh(miniAuraGeo, miniAuraMat);
+      miniAuraMesh.position.set(0, 0, 0);
+      miniCoreGroup.add(miniAuraMesh);
+
+      // Mini Gimbal Rings
+      miniGimbalGroup = new THREE.Group();
+      miniGimbalGroup.position.set(0, 0, 0);
+      miniRingNodes = [];
+      miniRingMeshes = [];
+
+      function buildMiniGimbalRing(radius, tube, color, opacity, vx, vy, vz) {
+        const pivot = new THREE.Group();
+        pivot.position.set(0, 0, 0);
+        const geo = new THREE.TorusGeometry(radius, tube, 12, 64);
+        const mat = new THREE.MeshBasicMaterial({
+          color: color,
+          transparent: true,
+          opacity: opacity,
+          blending: THREE.AdditiveBlending
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        pivot.add(mesh);
+        miniGimbalGroup.add(pivot);
+        miniRingMeshes.push(mesh);
+        miniRingNodes.push({ pivot, vx, vy, vz });
+      }
+
+      buildMiniGimbalRing(45, 0.65, 0xff8c00, 0.8, 0.007, 0.012, 0.006);
+      buildMiniGimbalRing(48, 0.6, 0xd96500, 0.7, -0.01, 0.008, 0.009);
+      buildMiniGimbalRing(39, 0.55, 0xffaa00, 0.65, 0.009, -0.01, -0.007);
+
+      miniCoreGroup.add(miniGimbalGroup);
+    }
+
+    function updateViewportSize() {
+      const mount = document.getElementById('threejsMount');
+      if (!mount || !camera || !renderer) return;
+      const rect = mount.getBoundingClientRect();
+      const w = rect.width || mount.clientWidth;
+      const h = rect.height || mount.clientHeight;
+      if (w <= 0 || h <= 0) return;
+
+      camera.aspect = w / h;
+
+      if (currentWindowMode === 'dock') {
+        camera.position.set(0, 0, 260);
+        if (neuralCoreGroup) neuralCoreGroup.scale.set(0.92, 0.92, 0.92);
+      } else if (currentWindowMode === 'widget') {
+        camera.position.set(0, 0, 275);
+        if (neuralCoreGroup) neuralCoreGroup.scale.set(0.85, 0.85, 0.85);
+      } else {
+        camera.position.set(0, 0, 205);
+        if (neuralCoreGroup) neuralCoreGroup.scale.set(1.22, 1.22, 1.22);
+      }
+
+      camera.lookAt(0, 0, 0);
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, true);
+    }
+
+    // --- 2. MULTI-HARMONIC ANIMATION LOOP ---
+    function animate() {
+      requestAnimationFrame(animate);
+      const time = clock.getElapsedTime();
+
+      rotY += (mouseX * 0.35 - rotY) * 0.05;
+      rotX += (-mouseY * 0.35 - rotX) * 0.05;
+
+      let targetColor;
+      let pulseSpeed = 2.4;
+      let targetGlowHex;
+      let coreScaleMultiplier = 1.0;
+      let ringSpeedMultiplier = 1.0;
+
+      if (agentState === 'listening') {
+        // Neon Electric Emerald Green (#00ff88)
+        targetScale = 1.28;
+        targetWobble = 0.42;
+        targetColor = new THREE.Color(0x00ff88);
+        targetGlowHex = 0x00ff88;
+        pulseSpeed = 5.2;
+        coreScaleMultiplier = 1.25;
+        ringSpeedMultiplier = 2.2;
+      } else if (agentState === 'speaking') {
+        // Incandescent Sunlight Gold (#fff8cc / #ffea79)
+        targetScale = 1.35;
+        targetWobble = 1.1;
+        targetColor = new THREE.Color(0xffea79);
+        targetGlowHex = 0xffea79;
+        pulseSpeed = 6.8;
+        coreScaleMultiplier = 1.45;
+        ringSpeedMultiplier = 2.8;
+      } else if (agentState === 'thinking') {
+        // Warm white-amber "thought" pulse — distinct from speaking gold
+        targetScale = 1.12;
+        targetWobble = 0.55;
+        targetColor = new THREE.Color(0xffd28a);
+        targetGlowHex = 0xffd28a;
+        pulseSpeed = 4.2;
+        coreScaleMultiplier = 1.15;
+        ringSpeedMultiplier = 1.7;
+      } else {
+        // Idle: Deep rich solar amber (#ff7700 / #d96500)
+        targetScale = 1.0;
+        targetWobble = 0.14;
+        targetColor = new THREE.Color(0xff7700);
+        targetGlowHex = 0xd96500;
+        pulseSpeed = 2.4;
+        coreScaleMultiplier = 1.0;
+        ringSpeedMultiplier = 1.0;
+      }
+
+      currentScale += (targetScale - currentScale) * 0.08;
+      wobbleIntensity += (targetWobble - wobbleIntensity) * 0.08;
+      currentColor.lerp(targetColor, 0.09);
+
+      // MAIN THREE.JS STAGE
+      if (currentWindowMode !== 'orb' && renderer && scene && camera && outerSwarm && innerSwarm) {
+        // Continuous Gyroscopic and Axial Revolutions
+        outerSwarm.rotation.y = time * 0.045 + rotY;
+        outerSwarm.rotation.x = time * 0.022 + rotX;
+        innerSwarm.rotation.y = -time * 0.075 + rotY;
+        innerSwarm.rotation.x = -time * 0.03 + rotX;
+
+        cage1.rotation.y += 0.012;
+        cage1.rotation.x -= 0.008;
+        cage2.rotation.z += 0.009;
+        cage2.rotation.y -= 0.006;
+        cage3.rotation.x += 0.014;
+
+        cageMeshes.forEach((mesh) => {
+          if (mesh && mesh.material) {
+            mesh.material.color.lerp(currentColor, 0.1);
+          }
+        });
+
+        // Symmetrical core pulsation & solar flares
+        const singPulse = (1.0 + Math.sin(time * pulseSpeed) * 0.18) * currentScale * coreScaleMultiplier;
+        coreSingularity.scale.set(singPulse, singPulse, singPulse);
+        if (agentState === 'speaking') {
+          coreSingularity.material.color.setHex(0xffffff);
+        } else if (agentState === 'listening') {
+          coreSingularity.material.color.setHex(0xebfffa);
+        } else {
+          coreSingularity.material.color.setHex(0xfff1de);
+        }
+
+        auraMesh.scale.set(singPulse * 1.45, singPulse * 1.45, singPulse * 1.45);
+        auraMesh.material.color.set(targetGlowHex);
+
+        flareMesh.scale.set(singPulse * 1.9, singPulse * 1.9, singPulse * 1.9);
+        flareMesh.material.color.lerp(currentColor, 0.1);
+
+        // Concentric Gimbal Rings Multi-Axis Rotation & Resonant Expansion
+        if (gimbalGroup) {
+          gimbalGroup.rotation.y = rotY * 0.35;
+          gimbalGroup.rotation.x = rotX * 0.35;
+
+          const ringScale = currentScale * (1.0 + Math.sin(time * 1.6) * 0.025);
+          gimbalGroup.scale.set(ringScale, ringScale, ringScale);
+
+          ringNodes.forEach((node) => {
+            node.pivot.rotation.x += node.vx * ringSpeedMultiplier;
+            node.pivot.rotation.y += node.vy * ringSpeedMultiplier;
+            node.pivot.rotation.z += node.vz * ringSpeedMultiplier;
+          });
+
+          ringMeshes.forEach((item) => {
+            if (item.material) {
+              item.material.color.lerp(currentColor, 0.09);
+            } else if (item.color) {
+              item.color.lerp(currentColor, 0.09);
+            }
+          });
+        }
+
+        // Astrolabe Grid Lines Rotation
+        if (astrolabePoints) {
+          astrolabePoints.rotation.y = time * 0.08 * ringSpeedMultiplier;
+          astrolabePoints.rotation.x = Math.sin(time * 0.5) * 0.1;
+          astrolabePoints.material.color.lerp(currentColor, 0.08);
+        }
+
+        // Symmetrical Coronal Solar Dust Orbits
+        const cPos = coronaPoints.geometry.attributes.position.array;
+        for (let i = 0; i < coronaCount; i++) {
+          const idx = i * 3;
+          const bx = coronaBase[idx];
+          const by = coronaBase[idx + 1];
+          const bz = coronaBase[idx + 2];
+          const angle = time * coronaSpeeds[i] * ringSpeedMultiplier;
+
+          const cosA = Math.cos(angle);
+          const sinA = Math.sin(angle);
+          cPos[idx] = (bx * cosA - bz * sinA) * currentScale;
+          cPos[idx + 1] = by * currentScale;
+          cPos[idx + 2] = (bx * sinA + bz * cosA) * currentScale;
+        }
+        coronaPoints.geometry.attributes.position.needsUpdate = true;
+        coronaPoints.material.color.lerp(currentColor, 0.08);
+
+        // Inner nucleus swarm colors
+        const inCol = innerSwarm.geometry.attributes.color.array;
+        for (let k = 0; k < innerNodeCount; k++) {
+          const kIdx = k * 3;
+          inCol[kIdx] += (currentColor.r - inCol[kIdx]) * 0.08;
+          inCol[kIdx + 1] += (currentColor.g - inCol[kIdx + 1]) * 0.08;
+          inCol[kIdx + 2] += (currentColor.b - inCol[kIdx + 2]) * 0.08;
+        }
+        innerSwarm.geometry.attributes.color.needsUpdate = true;
+
+        // Outer Fibonacci Particle Lattice: Symmetric Radial Breathing Harmonics
+        const oPos = outerSwarm.geometry.attributes.position.array;
+        const oCol = outerSwarm.geometry.attributes.color.array;
+
+        const maxLines = 900;
+        const lineGeo = synapticLines.geometry;
+        const linePos = lineGeo.attributes.position.array;
+        const lineCol = lineGeo.attributes.color.array;
+
+        let lineIdx = 0;
+        let lineCount = 0;
+
+        for (let i = 0; i < outerNodeCount; i++) {
+          const idx = i * 3;
+          const bx = outerBase[idx];
+          const by = outerBase[idx + 1];
+          const bz = outerBase[idx + 2];
+
+          // Balanced Radial Spherical Harmonic Modulation
+          const distFromCenter = 64;
+          const wave1 = Math.sin(time * pulseSpeed + (bx * bx + by * by + bz * bz) * 0.0018);
+          const wave2 = Math.cos(time * (pulseSpeed * 1.25) + bx * 0.04 + by * 0.04 + bz * 0.04);
+          const displacement = (wave1 * 3.4 + wave2 * 2.4) * wobbleIntensity;
+
+          const rFactor = currentScale * (1 + displacement / distFromCenter);
+          oPos[idx] = bx * rFactor;
+          oPos[idx + 1] = by * rFactor;
+          oPos[idx + 2] = bz * rFactor;
+
+          oCol[idx] += (currentColor.r - oCol[idx]) * 0.08;
+          oCol[idx + 1] += (currentColor.g - oCol[idx + 1]) * 0.08;
+          oCol[idx + 2] += (currentColor.b - oCol[idx + 2]) * 0.08;
+
+          // Connect adjacent nodes in the Fibonacci lattice symmetrically
+          if (lineCount < maxLines && i % 2 === 0) {
+            for (let j = i + 1; j < Math.min(i + 14, outerNodeCount); j++) {
+              const jx = j * 3;
+              const dx = oPos[idx] - oPos[jx];
+              const dy = oPos[idx + 1] - oPos[jx + 1];
+              const dz = oPos[idx + 2] - oPos[jx + 2];
+              const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+              if (dist < 19 * currentScale) {
+                const alpha = 1.0 - (dist / (19 * currentScale));
+                linePos[lineIdx] = oPos[idx];
+                linePos[lineIdx + 1] = oPos[idx + 1];
+                linePos[lineIdx + 2] = oPos[idx + 2];
+                linePos[lineIdx + 3] = oPos[jx];
+                linePos[lineIdx + 4] = oPos[jx + 1];
+                linePos[lineIdx + 5] = oPos[jx + 2];
+
+                const lr = oCol[idx] * alpha;
+                const lg = oCol[idx + 1] * alpha;
+                const lb = oCol[idx + 2] * alpha;
+
+                lineCol[lineIdx] = lr;
+                lineCol[lineIdx + 1] = lg;
+                lineCol[lineIdx + 2] = lb;
+                lineCol[lineIdx + 3] = lr;
+                lineCol[lineIdx + 4] = lg;
+                lineCol[lineIdx + 5] = lb;
+
+                lineIdx += 6;
+                lineCount++;
+                if (lineCount >= maxLines) break;
+              }
+            }
+          }
+        }
+
+        outerSwarm.geometry.attributes.position.needsUpdate = true;
+        outerSwarm.geometry.attributes.color.needsUpdate = true;
+
+        for (let k = lineIdx; k < maxLines * 6; k++) {
+          linePos[k] = 0;
+          lineCol[k] = 0;
+        }
+        lineGeo.attributes.position.needsUpdate = true;
+        lineGeo.attributes.color.needsUpdate = true;
+
+        renderer.render(scene, camera);
+      }
+
+      // --- ANIMATE MINIATURE 3D SOLAR NEURAL ORB (only when visible) ---
+      if (currentWindowMode === 'orb' && miniScene && miniCamera && miniRenderer && miniOuterSwarm) {
+        miniOuterSwarm.rotation.y = time * 0.08 + rotY * 0.4;
+        miniOuterSwarm.rotation.x = time * 0.04 + rotX * 0.4;
+
+        if (miniCage1) {
+          miniCage1.rotation.y += 0.016;
+          miniCage1.rotation.x -= 0.011;
+          miniCage1.material.color.lerp(currentColor, 0.1);
+        }
+
+        const miniPulse = (1.0 + Math.sin(time * pulseSpeed) * 0.2) * (currentScale * 0.95);
+        if (miniSingularity) {
+          miniSingularity.scale.set(miniPulse, miniPulse, miniPulse);
+          if (agentState === 'speaking') {
+            miniSingularity.material.color.setHex(0xffffff);
+          } else if (agentState === 'listening') {
+            miniSingularity.material.color.setHex(0xd0ffea);
+          } else {
+            miniSingularity.material.color.setHex(0xffecd0);
+          }
+        }
+
+        if (miniAuraMesh) {
+          miniAuraMesh.scale.set(miniPulse * 1.5, miniPulse * 1.5, miniPulse * 1.5);
+          miniAuraMesh.material.color.set(targetGlowHex);
+        }
+
+        if (miniGimbalGroup) {
+          const miniSpeedMultiplier = (agentState === 'speaking' ? 2.5 : (agentState === 'listening' ? 1.8 : 1.0));
+          miniRingNodes.forEach((node) => {
+            node.pivot.rotation.x += node.vx * miniSpeedMultiplier;
+            node.pivot.rotation.y += node.vy * miniSpeedMultiplier;
+            node.pivot.rotation.z += node.vz * miniSpeedMultiplier;
+          });
+          miniRingMeshes.forEach(m => m.material.color.lerp(currentColor, 0.1));
+        }
+
+        const mCols = miniOuterSwarm.geometry.attributes.color.array;
+        for (let m = 0; m < mCols.length; m += 3) {
+          mCols[m] += (currentColor.r - mCols[m]) * 0.1;
+          mCols[m + 1] += (currentColor.g - mCols[m + 1]) * 0.1;
+          mCols[m + 2] += (currentColor.b - mCols[m + 2]) * 0.1;
+        }
+        miniOuterSwarm.geometry.attributes.color.needsUpdate = true;
+
+        miniRenderer.render(miniScene, miniCamera);
+      }
+    }
+
+    // --- 3. WINDOW RATIO SWITCHING ---
+    let currentWindowMode = 'full';
+
+    function setWindowMode(mode) {
+      currentWindowMode = mode;
+      const app = document.getElementById('app-container');
+      const floatingOverlay = document.getElementById('floatingOrbOverlay');
+      const hintsBar = document.getElementById('promptHintsBar');
+      const promptPanelWrapper = document.getElementById('prompt-panel-wrapper');
+      const promptPanel = document.getElementById('prompt-panel');
+      const headerTag = document.getElementById('headerTag');
+      const stateBadge = document.getElementById('stateBadge');
+
+      const modeKeys = [
+        { id: 'btnModeFull', key: 'full' },
+        { id: 'btnModeDock', key: 'dock' },
+        { id: 'btnModeWidget', key: 'widget' },
+        { id: 'btnModeOrb', key: 'orb' }
+      ];
+
+      modeKeys.forEach(m => {
+        const btn = document.getElementById(m.id);
+        if (!btn) return;
+        if (m.key === mode) {
+          btn.className = 'px-2.5 md:px-3 py-1 text-[10px] md:text-[11px] font-mono rounded transition-all bg-[#e67300] text-black font-semibold shadow-[0_0_12px_rgba(230,115,0,0.4)] whitespace-nowrap';
+        } else {
+          btn.className = 'px-2.5 md:px-3 py-1 text-[10px] md:text-[11px] font-mono rounded transition-all text-zinc-400 hover:text-[#e67300] hover:bg-amber-950/40 whitespace-nowrap';
+        }
+      });
+
+      app.classList.remove('mode-full', 'mode-dock', 'mode-widget', 'mode-orb');
+      app.classList.add('mode-' + mode);
+
+      promptPanelWrapper.style.setProperty('display', 'flex', 'important');
+      promptPanelWrapper.style.setProperty('opacity', '1', 'important');
+      promptPanelWrapper.style.setProperty('visibility', 'visible', 'important');
+      promptPanelWrapper.style.setProperty('transform', 'none', 'important');
+
+      if (mode === 'full') {
+        floatingOverlay.classList.add('hidden');
+        restoreOrbChip();
+        if (hintsBar) hintsBar.style.display = 'flex';
+        if (headerTag) headerTag.style.display = 'inline-block';
+        if (stateBadge) stateBadge.style.display = 'flex';
+        promptPanel.style.maxWidth = '48rem';
+        promptPanel.style.padding = '0.375rem 0.375rem 0.375rem 0.625rem';
+      } else if (mode === 'dock') {
+        floatingOverlay.classList.add('hidden');
+        restoreOrbChip();
+        if (hintsBar) hintsBar.style.display = 'none';
+        if (headerTag) headerTag.style.display = 'none';
+        if (stateBadge) stateBadge.style.display = 'none';
+        promptPanel.style.maxWidth = '100%';
+        promptPanel.style.padding = '0.375rem 0.375rem 0.375rem 0.5rem';
+      } else if (mode === 'widget') {
+        floatingOverlay.classList.add('hidden');
+        restoreOrbChip();
+        if (hintsBar) hintsBar.style.display = 'none';
+        if (headerTag) headerTag.style.display = 'none';
+        if (stateBadge) stateBadge.style.display = 'none';
+        promptPanel.style.maxWidth = '100%';
+        promptPanel.style.padding = '0.375rem 0.375rem 0.375rem 0.5rem';
+      } else if (mode === 'orb') {
+        floatingOverlay.classList.remove('hidden');
+        const rippleE = document.getElementById('pureOrbRipple');
+        floatingOverlay.style.top = '50%';
+        floatingOverlay.style.left = '50%';
+        floatingOverlay.style.right = 'auto';
+        floatingOverlay.style.bottom = 'auto';
+        floatingOverlay.style.transform = 'translate(-50%, -50%)';
+        if (rippleE) rippleE.style.display = 'none';
+        bindOrbChipDrag();
+      }
+
+      [10, 50, 150, 350].forEach(delay => {
+        setTimeout(() => {
+          updateViewportSize();
+        }, delay);
+      });
+
+      // Drive the native window so it follows the mode's size/shape.
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.set_mode) {
+        try { window.pywebview.api.set_mode(mode); } catch (e) { /* browser mode */ }
+      }
+    }
+
+    function handleOrbClick(e) {
+      setWindowMode('full');
+    }
+
+    // Orb chip: drag the borderless window; a click (no drag) expands.
+    let _orbChipBound = false;
+    function bindOrbChipDrag() {
+      const overlay = document.getElementById('floatingOrbOverlay');
+      const ob = document.getElementById('miniOrbBeacon');
+      if (!overlay || _orbChipBound) {
+        if (ob && !_orbChipBound) {
+          ob.onclick = function (ev) {
+            if (window.__orbDragMoved) { window.__orbDragMoved = false; return; }
+            handleOrbClick(ev);
+          };
+          _orbChipBound = true;
+        }
+        return;
+      }
+      let dragging = false, moved = false;
+      let lx = 0, ly = 0, sx = 0, sy = 0;
+      overlay.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0) return;
+        dragging = true; moved = false;
+        window.__orbDragMoved = false; // a previous drag must not swallow this click
+        sx = ev.screenX; sy = ev.screenY;
+        lx = ev.screenX; ly = ev.screenY;
+      });
+      window.addEventListener('pointermove', (ev) => {
+        if (!dragging) return;
+        const dx = ev.screenX - lx, dy = ev.screenY - ly;
+        if (Math.abs(ev.screenX - sx) > 6 || Math.abs(ev.screenY - sy) > 6) moved = true;
+        if (moved && (dx !== 0 || dy !== 0)) {
+          lx = ev.screenX; ly = ev.screenY;
+          const a = hudApi();
+          if (a && a.move_window) a.move_window(dx, dy);
+        }
+      });
+      window.addEventListener('pointerup', () => {
+        if (!dragging) return;
+        dragging = false;
+        window.__orbDragMoved = moved;
+      });
+      if (ob) {
+        ob.onclick = function (ev) {
+          if (window.__orbDragMoved) { window.__orbDragMoved = false; return; }
+          handleOrbClick(ev);
+        };
+      }
+      _orbChipBound = true;
+    }
+
+    function restoreOrbChip() {
+      const overlay = document.getElementById('floatingOrbOverlay');
+      const auraE = document.getElementById('pureOrbAura');
+      const rippleE = document.getElementById('pureOrbRipple');
+      const ob = document.getElementById('miniOrbBeacon');
+      if (overlay) {
+        overlay.style.top = '';
+        overlay.style.left = '';
+        overlay.style.right = '';
+        overlay.style.bottom = '';
+        overlay.style.transform = '';
+      }
+      if (auraE) auraE.style.transform = '';
+      if (rippleE) rippleE.style.display = '';
+      if (ob) ob.style.transform = '';
+    }
+
+    // --- 4. COLOR STATE & AUDIO EQUALIZER LOGIC ---
+    let isListening = false;
+
+    function setAgentState(state) {
+      agentState = state;
+      const badge = document.getElementById('stateBadge');
+      const dot = document.getElementById('stateDot');
+      const label = document.getElementById('stateLabel');
+      const micBeacon = document.getElementById('micLiveBeacon');
+      const micButton = document.getElementById('micButton');
+      const eq = document.getElementById('acousticEqualizer');
+      const eqBars = document.querySelectorAll('#acousticEqualizer .wave-bar');
+      const coreDot = document.getElementById('coreStatusDot');
+      const moniker = document.getElementById('monikerText');
+      const headerTag = document.getElementById('headerTag');
+      const engageBtn = document.getElementById('engageBtn');
+      const promptBox = document.getElementById('prompt-panel');
+      const atmosphere = document.getElementById('radialAtmosphere');
+
+      const pureOrbAura = document.getElementById('pureOrbAura');
+      const pureOrbRipple = document.getElementById('pureOrbRipple');
+
+      if (state === 'listening') {
+        // Neon Emerald Green (#00ff88)
+        if (badge) badge.className = 'hidden md:flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-950/70 border border-emerald-500/50 text-emerald-400 font-mono text-xs tracking-wider transition-all duration-300';
+        if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#00ff88] animate-ping';
+        if (label) label.innerText = 'LISTENING // ACOUSTIC SYNC';
+        if (coreDot) coreDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_14px_#00ff88] animate-pulse';
+        if (moniker) moniker.className = 'font-mono tracking-[0.22em] text-sm md:text-base font-extrabold text-emerald-400 transition-colors duration-300';
+        if (headerTag) headerTag.className = 'text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 hidden xs:inline-block transition-colors duration-300 font-semibold';
+
+        if (micBeacon) micBeacon.style.opacity = '1';
+        if (micButton) {
+          micButton.className = 'relative p-1.5 md:p-2 rounded-lg bg-emerald-950/50 text-emerald-300 border border-emerald-500/50 transition-all duration-200 shrink-0';
+        }
+
+        if (promptBox) {
+          promptBox.classList.remove('hud-border', 'hud-border-speaking');
+          promptBox.classList.add('hud-border-listening');
+        }
+        if (engageBtn) {
+          engageBtn.className = 'flex items-center space-x-1 md:space-x-1.5 px-3.5 md:px-4 py-1.5 md:py-2 rounded-lg bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-400 hover:brightness-115 text-black font-semibold text-xs tracking-wider transition-all duration-200 shadow-[0_0_18px_rgba(0,255,136,0.45)] shrink-0';
+        }
+
+        if (eq) eq.classList.add('wave-animated');
+        eqBars.forEach(bar => {
+          bar.className = 'wave-bar wb-1 w-0.5 md:w-1 bg-emerald-400 rounded-full transition-colors duration-300';
+        });
+
+        if (atmosphere) atmosphere.style.background = 'radial-gradient(circle at center, rgba(0,255,136,0.22) 0%, rgba(8,9,13,0.98) 72%)';
+
+        if (pureOrbAura) {
+          pureOrbAura.style.backgroundColor = 'rgba(0, 255, 136, 0.45)';
+          pureOrbAura.className = 'absolute w-44 h-44 rounded-full bg-emerald-400/40 blur-2xl orb-aura-pulse pointer-events-none transition-all duration-300';
+        }
+        if (pureOrbRipple) {
+          pureOrbRipple.className = 'absolute w-44 h-44 rounded-full border-2 border-emerald-400/70 opacity-100 scale-110 animate-ping transition-all duration-300 pointer-events-none';
+        }
+
+      } else if (state === 'speaking') {
+        // Incandescent Sunlight Gold (#fff8cc / #ffea79)
+        if (badge) badge.className = 'hidden md:flex items-center space-x-1.5 px-3 py-1 rounded-full bg-amber-900/60 border border-yellow-200/70 text-yellow-100 font-mono text-xs tracking-wider transition-all duration-300';
+        if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-yellow-200 shadow-[0_0_12px_#fff275] animate-ping';
+        if (label) label.innerText = 'PROCESSING // ENGAGED';
+        if (coreDot) coreDot.className = 'w-2.5 h-2.5 rounded-full bg-yellow-200 shadow-[0_0_16px_#ffffff] animate-pulse';
+        if (moniker) moniker.className = 'font-mono tracking-[0.22em] text-sm md:text-base font-extrabold text-yellow-200 transition-colors duration-300';
+        if (headerTag) headerTag.className = 'text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-900/50 text-yellow-100 border border-yellow-300/50 hidden xs:inline-block transition-colors duration-300 font-semibold';
+
+        if (micBeacon) micBeacon.style.opacity = '0';
+        if (micButton) {
+          micButton.className = 'relative p-1.5 md:p-2 rounded-lg bg-amber-950/40 text-yellow-200 border border-yellow-300/50 transition-all duration-200 shrink-0';
+        }
+
+        if (promptBox) {
+          promptBox.classList.remove('hud-border-listening', 'hud-border-speaking');
+          promptBox.classList.add('hud-border-speaking');
+        }
+        if (engageBtn) {
+          engageBtn.className = 'flex items-center space-x-1 md:space-x-1.5 px-3.5 md:px-4 py-1.5 md:py-2 rounded-lg bg-gradient-to-r from-yellow-300 via-[#fff8cc] to-amber-200 hover:brightness-115 text-black font-semibold text-xs tracking-wider transition-all duration-200 shadow-[0_0_24px_rgba(255,242,117,0.65)] shrink-0';
+        }
+
+        if (eq) eq.classList.add('wave-animated');
+        eqBars.forEach(bar => {
+          bar.className = 'wave-bar wb-1 w-0.5 md:w-1 bg-yellow-200 rounded-full transition-colors duration-300';
+        });
+
+        if (atmosphere) atmosphere.style.background = 'radial-gradient(circle at center, rgba(255,242,117,0.25) 0%, rgba(8,9,13,0.98) 72%)';
+
+        if (pureOrbAura) {
+          pureOrbAura.style.backgroundColor = 'rgba(255, 234, 121, 0.6)';
+          pureOrbAura.className = 'absolute w-44 h-44 rounded-full bg-yellow-200/50 blur-2xl orb-aura-pulse pointer-events-none transition-all duration-300';
+        }
+        if (pureOrbRipple) {
+          pureOrbRipple.className = 'absolute w-44 h-44 rounded-full border border-yellow-200/50 opacity-60 scale-100 transition-all duration-300 pointer-events-none';
+        }
+
+      } else if (state === 'thinking') {
+        // Warm amber-white thought state (between listening and speaking)
+        if (label) label.innerText = 'THINKING';
+        if (coreDot) coreDot.className = 'w-2.5 h-2.5 rounded-full bg-[#ffd28a] shadow-[0_0_14px_#ffd28a] animate-pulse';
+        if (micBeacon) micBeacon.style.opacity = '0';
+        if (promptBox) {
+          promptBox.classList.remove('hud-border-listening', 'hud-border');
+          promptBox.classList.add('hud-border-speaking');
+        }
+        if (eq) eq.classList.remove('wave-animated', 'wave-idle');
+      } else {
+        // IDLE: Solar Amber (#ff7700, #d96500)
+        if (badge) badge.className = 'hidden md:flex items-center space-x-1.5 px-3 py-1 rounded-full bg-amber-950/40 border border-[#e67300]/35 text-[#ff8c00] font-mono text-xs tracking-wider transition-all duration-300';
+        if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-[#ff7700] shadow-[0_0_8px_#ff7700]';
+        if (label) label.innerText = 'IDLE // STANDBY';
+        if (coreDot) coreDot.className = 'w-2.5 h-2.5 rounded-full bg-[#ff7700] shadow-[0_0_14px_#ff7700] animate-pulse';
+        if (moniker) moniker.className = 'font-mono tracking-[0.22em] text-sm md:text-base font-extrabold text-[#ff8c00] transition-colors duration-300';
+        if (headerTag) headerTag.className = 'text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-950/50 text-[#ff8c00] border border-[#e67300]/30 hidden xs:inline-block transition-colors duration-300 font-semibold';
+
+        if (micBeacon) micBeacon.style.opacity = '0';
+        if (micButton) {
+          micButton.className = 'relative p-1.5 md:p-2 rounded-lg bg-amber-950/40 hover:bg-[#e67300]/20 text-[#ff8c00] hover:text-amber-300 transition-all duration-200 border border-[#e67300]/30 shrink-0';
+        }
+
+        if (promptBox) {
+          promptBox.classList.remove('hud-border-listening', 'hud-border-speaking');
+          promptBox.classList.add('hud-border');
+        }
+        if (engageBtn) {
+          engageBtn.className = 'flex items-center space-x-1 md:space-x-1.5 px-3.5 md:px-4 py-1.5 md:py-2 rounded-lg bg-gradient-to-r from-[#d96500] via-[#ff7700] to-[#d96500] hover:brightness-115 text-black font-semibold text-xs tracking-wider transition-all duration-200 shadow-[0_0_18px_rgba(230,115,0,0.38)] shrink-0';
+        }
+
+        // Static Audio Equalizer in idle
+        if (eq) eq.classList.remove('wave-animated');
+        eqBars.forEach((bar, idx) => {
+          const heights = ['h-1.5', 'h-2.5 md:h-3', 'h-3.5 md:h-4.5', 'h-2 md:h-2.5', 'h-1.5'];
+          bar.className = `wave-bar wb-${idx+1} w-0.5 md:w-1 bg-[#ff7700] rounded-full ${heights[idx]} transition-colors duration-300`;
+        });
+
+        if (atmosphere) atmosphere.style.background = 'radial-gradient(circle at center, rgba(217,101,0,0.22) 0%, rgba(8,9,13,0.98) 72%)';
+
+        if (pureOrbAura) {
+          pureOrbAura.style.backgroundColor = 'rgba(217, 101, 0, 0.25)';
+          pureOrbAura.className = 'absolute w-44 h-44 rounded-full bg-[#d96500]/25 blur-2xl orb-aura-pulse pointer-events-none transition-all duration-500';
+        }
+        if (pureOrbRipple) {
+          pureOrbRipple.className = 'absolute w-44 h-44 rounded-full border border-emerald-400/40 opacity-0 scale-95 transition-all duration-300 pointer-events-none';
+        }
+      }
+
+      // Stop control: only visible while Ra is busy (thinking / speaking).
+      const stopBtn = document.getElementById('stopButton');
+      if (stopBtn) {
+        stopBtn.classList.toggle('hidden',
+          state !== 'thinking' && state !== 'speaking');
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // RA HUD WIRING — bridges the HUD to Ra's brain, TTS, STT, logs, config
+    // ═══════════════════════════════════════════════════════════════════
+    const CHAT = document.getElementById('chatPanel');
+    let micMode = 'ptt';             // 'ptt' | 'continuous'
+    let continuousEnabled = false;
+    let wsTalk = null;
+    let pttActive = false;
+    let pttHold = false;
+    let subtitleEnabled = true;
+    let subtitleTimer = null;
+    let liveReplyRow = null;   // live token-stream Ra row (reused until reply lands)
+    let liveReplyText = '';
+
+    // ── Subtitles (spoken exchange captions, toggleable in settings) ───
+    function addSubtitle(user, ra) {
+      const sUser = document.getElementById('subtitleUser');
+      const sRa = document.getElementById('subtitleRa');
+      const strip = document.getElementById('subtitleStrip');
+      if (!user && !ra) { if (strip) strip.style.display = 'none'; return; }
+      if (!subtitleEnabled) return;
+      if (sUser && user) sUser.innerText = user;
+      if (sRa && ra) sRa.innerText = ra;
+      if (strip) strip.style.display = 'flex';
+      clearTimeout(subtitleTimer);
+      subtitleTimer = setTimeout(() => { if (strip) strip.style.display = 'none'; }, 10000);
+    }
+
+    // ── Chat panel ─────────────────────────────────────────────────────
+    function addChat(who, text, extra) {
+      if (!CHAT) return;
+      const row = document.createElement('div');
+      row.className = 'flex items-start space-x-2 text-[11px] font-mono leading-snug ' + (extra || '');
+      const name = document.createElement('span');
+      name.className = who.toUpperCase() === 'RA' ? 'text-[#ff8c00] shrink-0 font-bold' : 'text-emerald-400 shrink-0 font-bold';
+      name.innerText = who + ':';
+      const body = document.createElement('span');
+      body.className = 'text-zinc-200 whitespace-pre-wrap break-words flex-1';
+      body.innerText = text || '';
+      row.appendChild(name);
+      row.appendChild(body);
+      CHAT.appendChild(row);
+      CHAT.scrollTop = CHAT.scrollHeight;
+    }
+
+    // ── Live token streaming: update one Ra row as the reply is written ──
+    function updateLiveReply(text) {
+      if (!CHAT) return;
+      if (!text) {
+        if (liveReplyRow && liveReplyRow.parentNode) {
+          liveReplyRow.parentNode.removeChild(liveReplyRow);
+        }
+        liveReplyRow = null;
+        liveReplyText = '';
+        return;
+      }
+      if (!liveReplyRow) {
+        liveReplyRow = document.createElement('div');
+        liveReplyRow.className = 'flex items-start space-x-2 text-[11px] font-mono leading-snug';
+        const name = document.createElement('span');
+        name.className = 'text-[#ff8c00] shrink-0 font-bold';
+        name.innerText = 'Ra:';
+        liveReplyRow.appendChild(name);
+        const body = document.createElement('span');
+        body.className = 'text-zinc-200 whitespace-pre-wrap break-words flex-1';
+        liveReplyRow.appendChild(body);
+        CHAT.appendChild(liveReplyRow);
+      }
+      liveReplyText = text;
+      liveReplyRow.children[1].innerText = text;
+      CHAT.scrollTop = CHAT.scrollHeight;
+    }
+
+    function commitLiveReply(finalText) {
+      // The final reply arrived: keep whatever is on screen, drop the live ref
+      // so the next exchange (or /api/stop's "Stopped.") starts a fresh row.
+      if (liveReplyRow && finalText) liveReplyRow.children[1].innerText = finalText;
+      liveReplyRow = null;
+      liveReplyText = '';
+    }
+
+    // ── WebSocket talk stream ──────────────────────────────────────────
+    function openTalkSocket() {
+      return new Promise((resolve, reject) => {
+        const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const ws = new WebSocket(proto + location.host + '/ws/talk');
+        ws.onopen = () => resolve(ws);
+        ws.onerror = (e) => reject(e);
+        // A dropped socket mid-conversation must never leave the orb stuck.
+        ws.onclose = () => {
+          if (wsTalk === ws) wsTalk = null;
+          if (agentState === 'thinking' || agentState === 'speaking') {
+            setAgentState('idle');
+            addChat('System', 'HUD link dropped - the reply may not have arrived.', '');
+          }
+        };
+        ws.onmessage = (ev) => {
+          let m;
+          try { m = JSON.parse(ev.data); } catch { return; }
+          if (m.type === 'status') {
+            setAgentState(m.status === 'speaking' ? 'speaking'
+              : (m.status === 'thinking' ? 'thinking'
+              : (m.status === 'listening' ? 'listening' : 'idle')));
+          } else if (m.type === 'token') {
+            // Live reply: this HUD shows the answer as it is being written.
+            updateLiveReply(m.buffer || '');
+          } else if (m.type === 'reply') {
+            if (liveReplyRow) {
+              // Streamed live already - just finalize that row (no duplicate).
+              commitLiveReply(m.reply || '');
+            } else if (m.reply) {
+              addChat('Ra', m.reply);
+            }
+            if (m.reply) addSubtitle(null, m.reply);
+            setAgentState('idle');
+          } else if (m.type === 'subtitle') {
+            addSubtitle(m.user, m.ra);
+          } else if (m.type === 'error') {
+            commitLiveReply('');
+            addChat('Ra', 'HUD: ' + m.error);
+            setAgentState('idle');
+          }
+        };
+      });
+    }
+
+    async function sendCommand(text) {
+      text = (text || '').trim();
+      if (!text) return;
+      addChat('You', text);
+      addSubtitle(text, null);
+      const input = document.getElementById('promptInput');
+      if (input) input.value = '';
+      setAgentState('thinking');
+      if (!wsTalk || wsTalk.readyState !== WebSocket.OPEN) {
+        try {
+          wsTalk = await openTalkSocket();
+        } catch (e) {
+          addChat('Ra', 'HUD link offline: ' + e.message);
+          setAgentState('idle');
+          return;
+        }
+      }
+      wsTalk.send(JSON.stringify({ text: text, speak: true }));
+    }
+
+    function sendPrompt() {
+      const input = document.getElementById('promptInput');
+      if (!input.value.trim()) return;
+      sendCommand(input.value);
+    }
+
+    function quickAction(text) {
+      sendCommand(text);
+    }
+
+    async function sendStop() {
+      try {
+        await fetch('/api/stop', { method: 'POST' });
+      } catch (e) {
+        addChat('System', 'Stop failed: ' + e.message, '');
+      }
+      updateLiveReply('');
+      setAgentState('idle');
+    }
+
+    // ── Push-to-talk mic ───────────────────────────────────────────────
+    async function pttListenOnce() {
+      if (pttActive) return;
+      pttActive = true;
+      setAgentState('listening');
+      try {
+        const r = await fetch('/api/mic', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const j = await r.json();
+        if (j.heard) {
+          addChat('You', j.heard);
+          addSubtitle(j.heard, null);
+          if (j.reply) {
+            if (liveReplyRow) commitLiveReply(j.reply);
+            else addChat('Ra', j.reply);
+            addSubtitle(null, j.reply);
+          }
+        }
+      } catch (e) {
+        addChat('Ra', 'Mic error: ' + e.message);
+      }
+      pttActive = false;
+      setAgentState('idle');
+    }
+
+    // ── Continuous listening mode ──────────────────────────────────────
+    async function setContinuous(on) {
+      continuousEnabled = on;
+      updateMicModeLabel();
+      try {
+        const r = await fetch('/api/micmode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: on })
+        });
+        const j = await r.json();
+        if (on && !j.ok) addChat('Ra', 'Continuous listening failed to start.');
+      } catch (e) {
+        addChat('Ra', 'Mic-mode error: ' + e.message);
+      }
+    }
+
+    function toggleMicMode() {
+      if (micMode === 'ptt') {
+        micMode = 'continuous';
+        setContinuous(true);
+        addChat('System', 'Continuous listening ON — say the wake word, then talk.', '');
+      } else {
+        micMode = 'ptt';
+        setContinuous(false);
+        addChat('System', 'Push-to-talk ON — hold SPACE or tap the mic.', '');
+      }
+    }
+
+    function updateMicModeLabel() {
+      const label = document.getElementById('micModeLabel');
+      const btn = document.getElementById('micModeButton');
+      if (!label || !btn) return;
+      if (micMode === 'continuous') {
+        label.innerText = continuousEnabled ? 'CONT' : 'CONT ● OFF';
+        btn.classList.remove('text-zinc-300', 'hover:text-[#e67300]');
+        btn.classList.add('text-emerald-300', 'border-emerald-500/40');
+      } else {
+        label.innerText = 'PTT';
+        btn.classList.add('text-zinc-300', 'hover:text-[#e67300]');
+        btn.classList.remove('text-emerald-300', 'border-emerald-500/40');
+      }
+    }
+
+    function toggleListening() {
+      if (micMode === 'continuous') {
+        setContinuous(!continuousEnabled);
+      } else {
+        pttListenOnce();
+      }
+    }
+
+    // ── Quick-action chips (Ra's real toolset) ─────────────────────────
+    const QUICK_COMMANDS = [
+      { label: 'Time', cmd: 'What time is it?' },
+      { label: 'Battery', cmd: 'What is the battery status?' },
+      { label: 'Play music', cmd: 'Play some music' },
+      { label: 'Pause', cmd: 'Pause the music' },
+      { label: 'Next song', cmd: 'Next song' },
+      { label: 'Now playing', cmd: 'What is now playing?' },
+      { label: 'Set timer', cmd: 'Set a timer for 5 minutes for pasta' },
+      { label: 'Remind me', cmd: 'Remind me in 10 minutes to drink water' },
+      { label: 'News', cmd: 'What is in the news today?' },
+      { label: 'Remember', cmd: 'Remember that I prefer decaf coffee' },
+      { label: 'Recall', cmd: 'What do you recall about me?' },
+      { label: 'Self-test', cmd: 'Run a self-test' },
+      { label: 'System health', cmd: 'How is the system?' },
+      { label: 'Start monitor', cmd: 'Start monitoring my battery' },
+      { label: 'Schedules', cmd: 'What have I scheduled?' },
+      { label: 'Tasks', cmd: 'What tasks do I have?' },
+      { label: 'Add task', cmd: 'Add a task: buy milk' },
+      { label: 'Volume up', cmd: 'Turn the volume up' },
+      { label: 'Volume down', cmd: 'Turn the volume down' },
+      { label: 'Open Spotify', cmd: 'Open Spotify' },
+      { label: 'Search web', cmd: 'Search the web for latest AI news' },
+      { label: 'Screen', cmd: 'Look at the screen' },
+      { label: 'What controls', cmd: 'What controls are on the screen?' },
+      { label: 'Stop', cmd: 'Stop' },
+    ];
+
+    function buildQuickActions() {
+      const grid = document.getElementById('quickToolsGrid');
+      if (!grid) return;
+      QUICK_COMMANDS.forEach((q) => {
+        const b = document.createElement('button');
+        b.className = 'text-[9px] md:text-[10px] font-mono px-2 py-1 rounded-full bg-black/60 hover:bg-amber-950/50 border border-[#e67300]/25 text-zinc-300 hover:text-[#ff8c00] transition-colors whitespace-nowrap';
+        b.innerText = q.label;
+        b.onclick = () => { toggleQuickTools(false); quickAction(q.cmd); };
+        grid.appendChild(b);
+      });
+    }
+
+    function toggleQuickTools(force) {
+      const grid = document.getElementById('quickToolsGrid');
+      const btn = document.getElementById('quickToolsToggle');
+      if (!grid) return;
+      const show = (force === undefined) ? grid.classList.contains('hidden') : !!force;
+      grid.classList.toggle('hidden', !show);
+      grid.style.display = show ? 'flex' : '';
+      if (btn) btn.innerText = show ? 'TOOLS ▴' : 'TOOLS ▾';
+    }
+
+    // ── Logs modal (real Ra logs) ──────────────────────────────────────
+    async function loadLogs() {
+      const container = document.querySelector('#logsModal .max-h-56');
+      if (!container) return;
+      container.innerHTML = '<div class="text-zinc-500 italic">Loading logs…</div>';
+      let logs = [];
+      try {
+        const r = await fetch('/api/logs');
+        const j = await r.json();
+        logs = j.logs || [];
+      } catch (e) {
+        logs = ['HUD could not reach the log server: ' + e.message];
+      }
+      const last = logs.slice(-100);
+      if (!last.length) {
+        container.innerHTML = '<div class="text-zinc-500 italic">No log entries yet.</div>';
+        return;
+      }
+      container.innerHTML = last.map((l) => {
+        const tsMatch = l.match(/^[0-9:. \-]+/);
+        let tag = '[RA]';
+        let rest = l;
+        if (tsMatch) { rest = l.slice(tsMatch[0].length); }
+        const tagMatch = rest.match(/^\[([^\]]+)\]\s*/);
+        if (tagMatch) { tag = '[' + tagMatch[1] + ']'; rest = rest.slice(tagMatch[0].length); }
+        const color = tag.toLowerCase().includes('err') ? 'text-red-400'
+                    : tag.toLowerCase().includes('warn') ? 'text-yellow-300'
+                    : tag.toLowerCase().includes('voice') ? 'text-emerald-400'
+                    : tag.toLowerCase().includes('tool') ? 'text-sky-400'
+                    : 'text-[#ff8c00]';
+        return '<div class="flex items-start space-x-2 text-zinc-400">'
+             + '<span class="text-zinc-500 shrink-0">' + (tsMatch ? tsMatch[0].trim() : '') + '</span>'
+             + '<span class="' + color + ' shrink-0">' + tag + '</span>'
+             + '<span class="break-all">' + (rest || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</span>'
+             + '</div>';
+      }).join('');
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function toggleModal(id) {
+      const modal = document.getElementById(id);
+      if (!modal) return;
+      modal.classList.toggle('hidden');
+      if (id === 'logsModal' && !modal.classList.contains('hidden')) {
+        loadLogs();
+      }
+    }
+
+    function clearLogs() {
+      const container = document.querySelector('#logsModal .max-h-56');
+      if (container) container.innerHTML = '<div class="text-zinc-500 italic">Buffer purged locally. Server log still at ~/.ra/ra.log.</div>';
+    }
+
+    // ── Settings (real Ra config) ──────────────────────────────────────
+    async function loadSettings() {
+      try {
+        const r = await fetch('/api/config');
+        const c = await r.json();
+        if (document.getElementById('settingWakeWords')) {
+          document.getElementById('settingWakeWords').value = (c.wake_words || ['fire up']).join(',');
+        }
+        if (document.getElementById('settingContinuous')) {
+          document.getElementById('settingContinuous').checked = !!c.continuous_listen;
+        }
+        if (document.getElementById('settingVoiceConversation')) {
+          document.getElementById('settingVoiceConversation').checked = !!c.voice_conversation;
+        }
+        if (document.getElementById('settingComputerAccess')) {
+          document.getElementById('settingComputerAccess').checked = !!c.computer_access;
+        }
+        if (document.getElementById('settingSubtitles')) {
+          document.getElementById('settingSubtitles').checked = c.hud_subtitles !== false;
+        }
+        subtitleEnabled = c.hud_subtitles !== false;
+        const strip = document.getElementById('subtitleStrip');
+        if (strip && !subtitleEnabled) strip.style.display = 'none';
+        // Sync mic mode with the server so the HUD never lies about listening
+        if (c.continuous_listen) {
+          micMode = 'continuous';
+          continuousEnabled = true;
+          updateMicModeLabel();
+        }
+        if (document.getElementById('settingTtsVoice')) {
+          document.getElementById('settingTtsVoice').value = c.tts_voice || 'en-GB-RyanNeural';
+        }
+        const line = document.getElementById('settingStatusLine');
+        if (line) {
+          line.innerText = c.assistant_name + ' | ' + (c.brains || []).join('+') + (c.multi_brain ? ' (race)' : '') + ' | ' + c.model;
+        }
+      } catch (e) {
+        const line = document.getElementById('settingStatusLine');
+        if (line) line.innerText = 'config offline: ' + e.message;
+      }
+    }
+
+    async function applySettings() {
+      const payload = {};
+      const w = document.getElementById('settingWakeWords');
+      if (w) payload.wake_words = w.value.split(',').map(s => s.trim()).filter(Boolean);
+      const c = document.getElementById('settingContinuous');
+      if (c) {
+        payload.continuous_listen = c.checked;
+        // Keep the mic-mode UI honest the moment settings are applied.
+        micMode = c.checked ? 'continuous' : 'ptt';
+        continuousEnabled = c.checked;
+        updateMicModeLabel();
+      }
+      const v = document.getElementById('settingVoiceConversation');
+      if (v) payload.voice_conversation = v.checked;
+      const a = document.getElementById('settingComputerAccess');
+      if (a) payload.computer_access = a.checked;
+      const s = document.getElementById('settingSubtitles');
+      if (s) {
+        payload.hud_subtitles = s.checked;
+        subtitleEnabled = s.checked;
+        const strip = document.getElementById('subtitleStrip');
+        if (strip && !subtitleEnabled) strip.style.display = 'none';
+      }
+      const t = document.getElementById('settingTtsVoice');
+      if (t) payload.tts_voice = t.value;
+      try {
+        const r = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        addChat('System', 'Settings applied: ' + (j.applied || []).join(', '), '');
+        toggleModal('settingsModal');
+      } catch (e) {
+        addChat('Ra', 'Settings error: ' + e.message);
+      }
+    }
+
+    // ── Status polling ─────────────────────────────────────────────────
+    function syncStatusBadge() {
+      // The server is the source of truth for the state machine - apply its
+      // status ALWAYS (including idle) so the orb can never stick in a
+      // stale thinking/speaking state after a dropped reply or refresh.
+      if (pttActive) return; // local PTT listen owns the state right now
+      fetch('/api/status').then(r => r.json()).then((j) => {
+        if (j.status) setAgentState(j.status);
+      }).catch(() => {});
+    }
+    setInterval(syncStatusBadge, 2000);
+
+    // ── Keyboard hotkeys ───────────────────────────────────────────────
+    function typingTarget() {
+      const el = document.activeElement;
+      const modalOpen = (id) => {
+        const m = document.getElementById(id);
+        return m && !m.classList.contains('hidden');
+      };
+      return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ||
+                       el.tagName === 'SELECT' || el.isContentEditable)) ||
+             modalOpen('settingsModal') || modalOpen('logsModal');
+    }
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && !typingTarget()) {
+        e.preventDefault();
+        if (micMode === 'continuous') return;
+        if (!pttHold) {
+          pttHold = true;
+          setAgentState('listening');
+        }
+      }
+      if (e.key === 'Escape') {
+        if (currentWindowMode === 'orb') setWindowMode('full');
+        const lModal = document.getElementById('logsModal');
+        const sModal = document.getElementById('settingsModal');
+        if (lModal && !lModal.classList.contains('hidden')) lModal.classList.add('hidden');
+        if (sModal && !sModal.classList.contains('hidden')) sModal.classList.add('hidden');
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.code === 'Space' && !typingTarget()) {
+        e.preventDefault();
+        if (micMode === 'continuous') return;
+        if (pttHold) {
+          pttHold = false;
+          pttListenOnce();
+        }
+      }
+    });
+
+    // ── Borderless window: header drag + minimize / close ─────────────
+    function hudApi() {
+      return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+    }
+    function hudMinimize() {
+      const a = hudApi();
+      if (a && a.minimize) a.minimize();
+    }
+    function hudClose() {
+      const a = hudApi();
+      if (a && a.close) a.close();
+    }
+
+    (function initHeaderDrag() {
+      let header = document.getElementById('hudHeader');
+      if (!header) return;
+      let dragging = false, moved = false;
+      let lastX = 0, lastY = 0, startX = 0, startY = 0;
+
+      function isInteractive(el) {
+        return el && (el.closest('button') || el.closest('input') ||
+                      el.closest('select') || el.closest('textarea') || el.closest('a'));
+      }
+      header.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0) return;
+        if (isInteractive(ev.target)) return;
+        dragging = true; moved = false;
+        startX = ev.screenX; startY = ev.screenY;
+        lastX = ev.screenX; lastY = ev.screenY;
+        header.style.cursor = 'grabbing';
+      });
+      window.addEventListener('pointermove', (ev) => {
+        if (!dragging) return;
+        const dx = ev.screenX - lastX, dy = ev.screenY - lastY;
+        if (Math.abs(ev.screenX - startX) > 6 || Math.abs(ev.screenY - startY) > 6) moved = true;
+        if (moved && (dx !== 0 || dy !== 0)) {
+          lastX = ev.screenX; lastY = ev.screenY;
+          const a = hudApi();
+          if (a && a.move_window) a.move_window(dx, dy);
+        }
+      });
+      window.addEventListener('pointerup', () => {
+        dragging = false;
+        header.style.cursor = '';
+      });
+    })();
+
+    // ── Init (keep the 3D core init, then wire the HUD) ────────────────
+    function initHud() {
+      setWindowMode('full');
+      buildQuickActions();
+      updateMicModeLabel();
+      loadSettings();
+      addChat('Ra', 'Online and always listening.',
+              'text-emerald-300');
+    }
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', initHud);
+    } else {
+      initHud();
+    }
+
+    // IMMEDIATE INITIALIZATION GUARANTEE
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', initThree);
+    } else {
+      initThree();
+    }
+    window.addEventListener('load', () => {
+      setTimeout(updateViewportSize, 50);
+    });
+  </script>
+
+
+</body></html>
