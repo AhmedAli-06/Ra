@@ -102,7 +102,15 @@ class _HudApi:
                 self._main.resize(w, h)
             except Exception:
                 pass
-            x, y = _center_pos(w, h)
+            sw, sh = _screen_logical()
+            if mode in ("dock", "widget"):
+                # Dock / widget: stick to the right edge out of the way
+                # (vertically centred) the moment the mode is picked - still
+                # freely draggable afterwards.
+                x = max(0, sw - w)
+                y = max(0, (sh - h) // 2)
+            else:
+                x, y = _center_pos(w, h)
             try:
                 self._main.move(x, y)
             except Exception:

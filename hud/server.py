@@ -182,22 +182,32 @@ def _process_voice(text: str):
 
 
 def _handle_phrase(text: str):
-    lower = (text or "").strip().lower()
-    if not lower:
+    original_lower = (text or "").strip().lower()
+    if not original_lower:
         return
     from ra.assistant import (_contains_wake, _strip_wake, _is_echo,
-                              _conversation_active, _STOP_RE)
+                              _conversation_active, _STOP_RE,
+                              _wait_correction, _corr_key)
+    # Wait briefly for whisper's re-transcription of this phrase (it usually
+    # lands within the grace window): the HUD used to act on raw Vosk text,
+    # which mishears soft words. The wake word / stop logic still keys off the
+    # ORIGINAL text - Vosk is reliable for short keywords like "fire up".
+    corrected = _wait_correction(_corr_key(text))
+    text = corrected or text
+    lower = text.lower().strip()
     if _continuous_busy.is_set():
         # Mid-reply: only an emergency "Ra, stop"-style interrupt is allowed -
         # everything else is ignored so ambient noise never cuts Ra off.
-        if _contains_wake(lower) and _STOP_RE.match(_strip_wake(text) or lower):
+        if _contains_wake(original_lower) and _STOP_RE.match(
+                _strip_wake(text) or lower):
             _interrupt_now()
         return
-    if _contains_wake(lower):
+    if _contains_wake(original_lower):
         _process_voice(_strip_wake(text) or lower)
     elif getattr(config, "VOICE_CONVERSATION", False) or _conversation_active():
         if not _is_echo(text):
             _process_voice(text)
+        # else: what Ra just said came back through the mic - ignore the echo.
 
 
 def _continuous_worker():

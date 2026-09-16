@@ -32,6 +32,32 @@ _spk_lock = threading.Lock()
 _mic_lock = threading.Lock()
 _mic = None
 
+# Cached result of mic auto-selection (module load is once-per-process).
+_mic_device_cache = {"index": None, "name": None}
+_stt_debug_fh = None
+_STT_DEBUG_LOCK = threading.Lock()
+
+
+def _stt_debug(msg: str):
+    """Append one line to the RA_STT_DEBUG log (default ~/.ra/ra_stt_debug.log).
+    The in-process ralog bus is memory-only and the HUD never writes ra.log to
+    disk, so this file is the only way to see what the DEPLOYED EXE actually
+    hears. Keeping the handle open makes ~5 lines/sec cheap."""
+    global _stt_debug_fh
+    d = getattr(config, "STT_DEBUG", "")
+    if not d:
+        return
+    try:
+        if _stt_debug_fh is None:
+            path = d if d.lower().endswith(".log") else os.path.join(
+                os.path.expanduser("~"), ".ra", "ra_stt_debug.log")
+            _stt_debug_fh = open(path, "a", encoding="utf-8")
+        with _STT_DEBUG_LOCK:
+            _stt_debug_fh.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
+            _stt_debug_fh.flush()
+    except Exception:
+        pass
+
 # ---------------------------------------------------------------------------
 # Text-to-speech
 # ---------------------------------------------------------------------------
@@ -565,10 +591,11 @@ class _SDCapture:
     """sounddevice/PortAudio capture: the audio callback pushes 0.2s int16
     blocks to a queue (never doing STT work inside the callback)."""
 
-    def __init__(self):
+    def __init__(self, device=None):
         self._q = queue.Queue(maxsize=256)
         self._stream = None
         self._closed = threading.Event()
+        self._device = device  # explicit PortAudio device index, or None=default
 
     def start(self):
         def _cb(indata, frames, t, status):
@@ -581,10 +608,12 @@ class _SDCapture:
             except queue.Full:
                 pass
 
-        self._stream = sd.InputStream(
-            samplerate=_SAMPLE_RATE, channels=_CHANNELS, dtype="int16",
-            blocksize=int(_SAMPLE_RATE * 0.2), callback=_cb,
-        )
+        kwargs = dict(samplerate=_SAMPLE_RATE, channels=_CHANNELS,
+                      dtype="int16", blocksize=int(_SAMPLE_RATE * 0.2),
+                      callback=_cb)
+        if self._device is not None:
+            kwargs["device"] = self._device
+        self._stream = sd.InputStream(**kwargs)
         self._stream.start()
 
     def next_block(self, timeout=0.2):
@@ -789,21 +818,139 @@ class _WinMMCapture:
             pass
 
 
+def _probe_mic_level(device, seconds=1.0):
+    """Capture `seconds` from one sounddevice input; returns (peak, mean) in
+    0..1 normalized units, or None if the device cannot open."""
+    try:
+        with sd.InputStream(samplerate=_SAMPLE_RATE, channels=_CHANNELS,
+                            dtype="int16", device=device,
+                            blocksize=int(_SAMPLE_RATE * 0.2)) as st:
+            chunks = []
+            t0 = time.time()
+            while time.time() - t0 < seconds:
+                d, _ovf = st.read(st.blocksize)
+                chunks.append(d[:, 0].astype(np.float64))
+        if not chunks:
+            return None
+        a = np.concatenate(chunks)
+        return (float(np.max(np.abs(a))) / 32768.0,
+                float(np.mean(np.abs(a))) / 32768.0)
+    except Exception:
+        return None
+
+
+def _pick_mic_device():
+    """Find the sounddevice input that actually carries audio. Windows' default
+    recording device can be a dead/disconnected endpoint while the real mic is
+    another index away (exactly what deafened Ra: sounddevice opened the silent
+    default while your voice sat on a sibling device). We probe EVERY input,
+    prefer the loudest LIVE one, and remember it for the process lifetime.
+
+    Honors RA_STT_MIC_DEVICE override (exact index, or name substring)."""
+    override = getattr(config, "STT_MIC_DEVICE", "").strip()
+    if override:
+        candidates = []
+        for i, d in enumerate(sd.query_devices()):
+            if d["max_input_channels"] < 1:
+                continue
+            if override.isdigit() and i == int(override):
+                candidates.append((i, d["name"]))
+            elif not override.isdigit() and override.lower() in d["name"].lower():
+                candidates.append((i, d["name"]))
+        if candidates:
+            i, name = candidates[0]
+            _mic_device_cache["index"] = i
+            _mic_device_cache["name"] = name
+            ralog.log("voice", f"mic override -> device [{i}] '{name}'")
+            _stt_debug(f"mic override -> device [{i}] '{name}'")
+            return i
+        ralog.log("warn", f"RA_STT_MIC_DEVICE='{override}' matched no openable "
+                          f"input; falling back to auto-pick")
+        _stt_debug(f"override '{override}' matched nothing; auto-pick")
+    if _mic_device_cache["index"] is not None:
+        return _mic_device_cache["index"]
+    # PortAudio enumerates alias/redirect endpoints that never carry speech
+    # (Sound Mapper, Primary Sound Capture Driver, Stereo Mix, aux jacks).
+    # Ranked as "real mic or not": only genuine microphones are candidates.
+    _ALIAS_FRAGMENTS = ("sound mapper", "primary sound capture", "stereo mix",
+                        "mono mix", " aux", "aux jack", "pc speaker",
+                        "handsfree", "hands-free", "hands free")
+    best = None  # (peak, mean, index, name, real)
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_input_channels"] < 1:
+            continue
+        name = (d["name"] or "")
+        real = not any(f in name.lower() for f in _ALIAS_FRAGMENTS)
+        r = _probe_mic_level(i, seconds=0.9)
+        if r is None:
+            _stt_debug(f"sd[{i}] '{name[:35]}' open failed (skip)")
+            continue
+        peak, mean = r
+        _stt_debug(f"sd[{i}] '{name[:35]}' real={real} peak={peak:.4f} "
+                   f"mean={mean:.4f}")
+        # Score (keep lowest):
+        #   1. a REAL mic beats any alias (a Mapper can show phantom noise
+        #      while smuggling zero voice);
+        #   2. a device that produced ANY nonzero signal beats an exact-zero
+        #      endpoint - on multi-host setups the same array exists as e.g.
+        #      an MME entry that carries speech and a WDM entry that returns
+        #      literal 0.0000 forever (dead path, never pick it);
+        #   3. among truly-live devices the loudest wins, so during speech
+        #      the working array host wins even mid-utterance.
+        key = (0 if real else 1,
+               0 if peak > 0 else 1,
+               0 if mean > 0 else 1,
+               peak)
+        if best is None or key < best[0]:
+            best = (key, peak, mean, i, name, real)
+    if best is None:
+        ralog.log("err", "capture: NO openable sounddevice input found.")
+        return None
+    _key, peak, mean, i, name, real = best
+    _mic_device_cache["index"] = i
+    _mic_device_cache["name"] = name
+    ralog.log("voice", f"mic auto-picked device [{i}] '{name}' "
+                       f"(real={real} peak={peak:.4f} mean={mean:.4f})")
+    _stt_debug(f"mic auto-picked device [{i}] '{name}' real={real} "
+               f"peak={peak:.4f} mean={mean:.4f}")
+    return i
+
+
 def _open_capture_source():
     """Open the best available mic capture; returns (source, backend_name).
-    Raises RuntimeError if no backend can open a stream."""
+    Chooses the LIVE device explicitly (never trusts the OS default), then
+    verifies the backend actually delivers blocks. Raises RuntimeError if no
+    backend can open a stream."""
     order = _BACKEND_ORDER.get(getattr(config, "STT_AUDIO_BACKEND", "auto"),
                                _BACKEND_ORDER["auto"])
     failures = []
     for name in order:
         try:
-            src = _WinMMCapture() if name == "winmm" else _SDCapture()
+            dev = _pick_mic_device() if name == "sounddevice" else None
+            src = _WinMMCapture() if name == "winmm" else _SDCapture(device=dev)
             src.start()
-            ralog.log("voice", f"Mic capture backend: {name}")
+            # Aliveness: a backend can "open" yet endlessly deliver nothing
+            # (winmm on this rig gave 0 blocks all 8s). Verify the first block
+            # actually arrives before accepting it.
+            got = src.next_block(timeout=1.5)
+            if got is None:
+                src.close()
+                msg = (f"'{name}' opened but delivered no audio"
+                       + (f" on device [{dev}]" if dev is not None else ""))
+                failures.append(msg)
+                ralog.log("err", f"capture: {msg}")
+                _stt_debug(f"capture: {msg}")
+                continue
+            if dev is not None:
+                ralog.log("voice", f"Mic capture backend: {name} "
+                                   f"(device [{dev}] '{_mic_device_cache['name']}')")
+            else:
+                ralog.log("voice", f"Mic capture backend: {name}")
             return src, name
         except Exception as e:
             failures.append(f"{name}: {e}")
             ralog.log("warn", f"Mic capture backend '{name}' unavailable: {e}")
+            _stt_debug(f"backend '{name}' unavailable: {e}")
     hint = _container_mic_hint()
     raise RuntimeError(
         f"no working mic capture backend (tried {', '.join(order)}) - "
@@ -827,6 +974,97 @@ def _container_mic_hint():
     except Exception:
         pass
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Room-noise calibration helpers
+# ---------------------------------------------------------------------------
+# A 25ms window is fine enough to see syllable-level energy swings while still
+# being a stable estimate of the local amplitude. The coefficient of variation
+# (std/mean) of the windowed RMS envelope separates HUMAN SPEECH from steady
+# machine hum (fan / AC / cooler): speech modulates strongly (syllables,
+# onsets, pauses - CV typically > 0.3), while a constant hum is nearly flat
+# (CV < 0.1 near zero). This single number drives both the per-block "is this
+# speech?" gate and the whole-utterance "was that just noise?" backstop.
+_STT_WIN = int(_SAMPLE_RATE * 0.025)
+
+
+def _rms_envelope(audio):
+    """RMS level of each 25ms window across `audio` (int16 or float32)."""
+    if audio is None or audio.size == 0:
+        return np.zeros(1, dtype=np.float64)
+    try:
+        win = int(min(_STT_WIN, audio.shape[0]))
+    except Exception:
+        win = 1
+    if win < 1:
+        win = 1
+    n = audio.shape[0] // win
+    if n < 2:
+        flat = audio.astype(np.float64)
+        return np.array([float(np.sqrt(np.mean(flat * flat)))])
+    flat = audio[: n * win].astype(np.float64)
+    frames = flat.reshape(n, win)
+    return np.sqrt(np.mean(frames * frames, axis=1))
+
+
+def _energy_cv(audio) -> float:
+    """Coefficient of variation of the 25ms RMS envelope. 0 = perfectly flat
+    (steady fan/AC hum); real speech is strongly modulated (>0.3 typically)."""
+    env = _rms_envelope(audio)
+    mean = float(np.mean(env))
+    if mean <= 1e-5:
+        return 0.0
+    return float(np.std(env)) / mean
+
+
+def _block_modulation(block) -> float:
+    """Modulation (CV of the windowed RMS envelope) of one 0.2s int16 block."""
+    return _energy_cv(block)
+
+
+def _track_noise_floor(noise: float, level: float) -> float:
+    """Adapt the ambient noise floor to the room, WITHOUT ever letting speech
+    (or a shout) lift it. Loud audio never moves the floor - that is what made
+    Ra deaf after the first scream - while a steady fan hum at the floor is
+    absorbed within a second or two (fast enough to become room tone, but too
+    slow for a 2-3s phrase to inflate the threshold mid-sentence)."""
+    if level >= config.STT_LOUD_LEVEL or level > noise * config.STT_NOISE_UP:
+        # Loud input is speech or a one-off slam - definitely NOT room noise.
+        return noise
+    if level > noise:
+        return min(level, noise + noise * config.STT_FLOOR_RISE)
+    return max(level, noise - noise * config.STT_FLOOR_FALL)
+
+
+def _classify_speech(level: float, block, noise: float) -> bool:
+    """Band-based speech test for one 0.2s block. Three bands top-down:
+
+    1. LOUD (absolute, e.g. a screaming / close-talking user) -> always speech,
+       envelope irrelevant. This is the anti-deafness guarantee.
+    2. CLEARLY ABOVE AMBIENT (moderate level, well above the tracked fan hum)
+       -> speech on level alone (real words stream over the hum).
+    3. NEAR THE FLOOR (weak signal) -> only speech when the envelope is
+       modulated; a steady fan hum right at the floor stays flat = noise.
+    """
+    if level >= config.STT_LOUD_LEVEL:
+        return True
+    if level > max(noise * config.STT_NOISE_RATIO,
+                   config.STT_MIN_SIGNAL_LEVEL):
+        return True
+    return (level >= config.STT_MIN_SIGNAL_LEVEL
+            and _block_modulation(block) >= config.STT_MODULATION_THRESHOLD)
+
+
+def _is_human_audio(audio) -> bool:
+    """Whole-utterance backstop: is a finished clip really a person speaking?
+    A LOUD clip (scream / shout) is accepted unconditionally - only quiet clips
+    need envelope-modulation proof, so flat fan hum sitting at the floor is
+    still dropped but a held shout can never be silenced."""
+    level = float(np.abs(audio).mean())
+    if level >= config.STT_LOUD_LEVEL:
+        return True
+    return _energy_cv(audio) >= config.STT_MODULATION_THRESHOLD
 
 
 class MicSession:
@@ -928,15 +1166,11 @@ class MicSession:
             ralog.log("err", f"microphone failed: {e}")
 
     # -- noise floor --------------------------------------------------------
-    def _track_noise(self, level: float):
-        """Slow-adapt to the room's ambient level (only silence pulls it down)."""
-        floor = self._noise
-        if level > floor * 3:
-            return  # speech - don't let loud audio raise the floor
-        self._noise = floor * 0.95 + level * 0.05
-
-    def _speech_level(self, level: float) -> bool:
-        return level > max(self._noise * 2.0, 0.006)
+    def _track_noise(self, level: float, block):
+        """Adapt the floor to the room's ambient. Loud audio (speech, shouts,
+        slams) NEVER moves the floor - a loud user must not become the new
+        hearing threshold - and a steady fan hum is absorbed as room tone."""
+        self._noise = _track_noise_floor(self._noise, level)
 
     # -- utterance clip (audio for the CURRENT phrase only) ----------------
     def _clip_block(self, block):
@@ -1009,6 +1243,15 @@ class MicSession:
                 ralog.log("voice", f"ignoring noise phrase '{text}' "
                                    f"({sustained:.2f}s speech).")
                 return
+            # Whole-utterance backstop: even when individual blocks were loud
+            # / modulated enough to slip through the per-block band gate, a
+            # mixed clip (fan + faint speech) may still be too flat overall -
+            # drop it rather than dispatch a likely hallucination. A LOUD clip
+            # (hold out a shout) is always human and passes unconditionally.
+            if text and audio is not None and not _is_human_audio(audio):
+                ralog.log("voice", f"ignoring flat-utterance '{text}' "
+                                   f"(modulation too low).")
+                return
             if text:
                 # Smooth: dispatch on a dedicated thread (instant, callback-free).
                 self._dispatch_q.put(text)
@@ -1027,10 +1270,18 @@ class MicSession:
         """A 0.2s mono int16 block arrived from the capture backend."""
         if self._stop.is_set():
             return
-        level = float(np.abs(block).mean())
-        self._track_noise(level)
+        level = float(np.abs(block).mean()) / 32768.0
+        self._track_noise(level, block)
         sec = block.shape[0] / _SAMPLE_RATE
-        if self._speech_level(level):
+        # Band classifier: a scream is ALWAYS speech, audio clearly above the
+        # ambient hum is speech, and only weak near-floor audio needs envelope
+        # modulation proof (fan / AC hum is flat real speech is not).
+        talking = _classify_speech(level, block, self._noise)
+        _stt_debug("vol=%s lvl=%.4f cv=%.3f floor=%.4f -> %s" % (
+            "S" if talking else "-", level,
+            _energy_cv(block) if level >= config.STT_MIN_SIGNAL_LEVEL else 0.0,
+            self._noise, "SPEECH" if talking else "noise"))
+        if talking:
             self._clip_block(block)
             self._speech_seconds += sec
         else:
@@ -1072,15 +1323,9 @@ class _WhisperVADStream:
         self._speech_started = 0.0
         self._speech_seconds = 0.0
 
-    # -- capture ----------------------------------------------------------
-    def _track_noise(self, level: float):
-        floor = self._noise
-        if level > floor * 3:
-            return
-        self._noise = floor * 0.95 + level * 0.05
-
-    def _is_speech(self, level: float) -> bool:
-        return level > max(self._noise * 1.7, 0.004)
+# -- capture ----------------------------------------------------------
+    def _track_noise(self, level: float, block):
+        self._noise = _track_noise_floor(self._noise, level)
 
     # -- lifecycle --------------------------------------------------------
     def start(self):
@@ -1123,9 +1368,16 @@ class _WhisperVADStream:
             ralog.log("err", f"whisper-VAD microphone failed: {e}")
 
     def _process(self, block):
-        level = float(np.abs(block).mean())
-        self._track_noise(level)
-        talking = self._is_speech(level)
+        level = float(np.abs(block).mean()) / 32768.0
+        self._track_noise(level, block)
+        # Band classifier: a scream is ALWAYS speech, audio clearly above the
+        # ambient hum is speech, and only weak near-floor audio needs envelope
+        # modulation proof - a steady flat fan hum is never "talking".
+        talking = _classify_speech(level, block, self._noise)
+        _stt_debug("vol=%s lvl=%.4f cv=%.3f floor=%.4f -> %s" % (
+            "S" if talking else "-", level,
+            _energy_cv(block) if level >= config.STT_MIN_SIGNAL_LEVEL else 0.0,
+            self._noise, "SPEECH" if talking else "noise"))
         sec = block.shape[0] / _SAMPLE_RATE
         with self._clip_lock:
             if talking and not self._in_speech:
@@ -1169,6 +1421,12 @@ class _WhisperVADStream:
             # Random blip at or near the threshold (two clicks, a puff) - not a
             # real utterance; transcribing it just yields hallucinated words.
             ralog.log("voice", f"ignoring noise blip ({sustained:.2f}s speech).")
+            return
+        if not _is_human_audio(audio):
+            # Whole-utterance backstop: steady hum that kept individual blocks
+            # near the VAD threshold is still too flat to be human speech
+            # (unless the clip is loud - a shout is human, period).
+            ralog.log("voice", "ignoring flat-utterance (modulation too low).")
             return
         self._tx_q.put(audio)
 

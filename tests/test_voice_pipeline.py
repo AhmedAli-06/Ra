@@ -41,6 +41,13 @@ def test_whisper_vad_finalize_does_not_deadlock(monkeypatch):
 
     monkeypatch.setattr(audio_io.config, "STT_PAUSE_THRESHOLD", 0.05)
     monkeypatch.setattr(audio_io.config, "STT_MIN_SPEECH_SECONDS", 0.0)
+    # The flat-envelope test blocks are constant-amplitude (deliberately - the
+    # regression is about the lock, not the VAD). Disable the modulation gate
+    # so the clip is still finalized and queued.
+    monkeypatch.setattr(audio_io.config, "STT_MODULATION_THRESHOLD", 0.0)
+    # Blocks are constant-amplitude (deliberately - the regression is about
+    # the lock, not the VAD). They must still clear the weak-signal floor
+    # (~0.005 normalized) so the VAD enters speech; loud but flat works.
 
     s = audio_io._WhisperVADStream(on_phrase=lambda t: None,
                                    on_partial=lambda t: None)
@@ -55,7 +62,7 @@ def test_whisper_vad_finalize_does_not_deadlock(monkeypatch):
             s._process(b)
             time.sleep(0.03)  # let the pause gate see real elapsed time
 
-    blocks = [_block(0.02), _block(0.02), _block(0.0001),
+    blocks = [_block(0.5), _block(0.5), _block(0.0001),
               _block(0.0001), _block(0.0001)]
     t = threading.Thread(target=_feed_with_pause, daemon=True, args=(blocks,))
     t.start()

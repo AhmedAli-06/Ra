@@ -478,6 +478,38 @@ STT_PAUSE_THRESHOLD = 0.8
 # interrupt the conversation. Env: RA_STT_MIN_SPEECH_SECONDS.
 STT_MIN_SPEECH_SECONDS = float(_env("RA_STT_MIN_SPEECH_SECONDS", "0.4"))
 STT_UTTERANCE_BUFFER_SECONDS = 30        # rolling buffer for re-transcription
+# Room-noise calibration. Modulation alone only confirms WEAK audio: a steady
+# fan / AC / cooler hum is flat (low CV) and is never treated as speech, while
+# a speaker arguing over it is modulated and still heard. 0 disables the
+# modulation gate (older lenient behavior, more fan false-positives).
+# Env: RA_STT_MODULATION (0.0-1.0, higher = stricter).
+STT_MODULATION_THRESHOLD = float(_env("RA_STT_MODULATION", "0.10"))
+# A block whose mean amplitude is at/above this is ALWAYS "speech" - screams,
+# shouts and close-talking must be heard regardless of envelope shape (a held
+# shout has a nearly flat envelope and must not be gated out). Absolute mean
+# of the int16 block (0-1), so it is independent of the adaptive noise floor.
+# Env: RA_STT_LOUD_LEVEL (higher = louder input needed to bypass the gate).
+STT_LOUD_LEVEL = float(_env("RA_STT_LOUD_LEVEL", "0.06"))
+# Absolute mean amplitude under which audio is too quiet to ever be speech -
+# the weak-signal floor every band inherits from (incl. perfect silence).
+# Env: RA_STT_MIN_SIGNAL.
+STT_MIN_SIGNAL_LEVEL = float(_env("RA_STT_MIN_SIGNAL", "0.005"))
+# Speech/ambient band ratio: audio well above the tracked room level (fan hum,
+# talking people nearby) counts as speech without needing envelope proof.
+# Env: RA_STT_NOISE_RATIO (higher = only much louder input is auto-accepted).
+STT_NOISE_RATIO = float(_env("RA_STT_NOISE_RATIO", "1.8"))
+# Loud-audio ceiling for the noise floor: any block at/above `noise * NOISE_UP`
+# never moves the floor, so a shout or running speech can NEVER lift Ra's
+# hearing threshold (this is what made it go deaf mid-conversation before).
+# Env: RA_STT_NOISE_UP.
+STT_NOISE_UP = float(_env("RA_STT_NOISE_UP", "4.0"))
+# Noise-floor adaptation. When ambient sits above the floor but below the
+# loud-audio ceiling (a running fan), the floor creeps up by FLOOR_RISE per
+# block (fast enough to absorb the hum in a second or two, too slow for a
+# 2-3s phrase to inflate it). Silence pulls the floor back down at FLOOR_FALL.
+# Env: RA_STT_FLOOR_RISE / RA_STT_FLOOR_FALL (0-1 fractions per 0.2s block).
+STT_FLOOR_RISE = float(_env("RA_STT_FLOOR_RISE", "0.08"))
+STT_FLOOR_FALL = float(_env("RA_STT_FLOOR_FALL", "0.04"))
 CONTINUOUS_LISTEN = _env("RA_CONTINUOUS_LISTEN", "1") != "0"
 # Conversation semantics. RA_VOICE_CONVERSATION=0 (default): the mic streams
 # always-on but Ra only responds once addressed by name/keyword (config
@@ -502,6 +534,16 @@ STT_CORRECTION_GRACE = float(_env("RA_STT_CORRECTION_GRACE", "0.8"))
 # build cannot open ANY capture device (fresh Win11 / virtual audio stacks).
 # Force one with RA_AUDIO_BACKEND=sounddevice|winmm.
 STT_AUDIO_BACKEND = _env("RA_AUDIO_BACKEND", "auto").lower()
+# Capture DEVICE: "auto" probes every openable sounddevice input briefly and
+# picks the one carrying real audio. Windows' *default* recording device can be
+# a dead virtual/disconnected endpoint while the real mic sits a few devices
+# away - trusting it silently deafens Ra. Force a specific input with
+# RA_STT_MIC_DEVICE=<index> or a name substring (e.g. "Microphone Array").
+STT_MIC_DEVICE = (_env("RA_STT_MIC_DEVICE", "") or "").strip()
+# When set, Ra appends a per-block level/verdict log to ~/.ra/ra_stt_debug.log
+# (or a custom path) so you can see exactly what the running exe hears.
+# Env: RA_STT_DEBUG=1 or RA_STT_DEBUG=C:\path\to\log.txt
+STT_DEBUG = _env("RA_STT_DEBUG", "").strip()
 
 # --- Vision (screen-grounded PC control) ---
 # Ra can screenshot the screen and have the configured vision-capable LLM
