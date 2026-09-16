@@ -1065,7 +1065,7 @@ class _WhisperVADStream:
         self._stop = threading.Event()
         self._src = None
         self._clip = []
-        self._clip_lock = threading.Lock()
+        self._clip_lock = threading.RLock()
         self._noise = float(getattr(config, "STT_ENERGY_THRESHOLD", 300)) / 32768.0
         self._in_speech = False
         self._silence_since = None
@@ -1303,3 +1303,4 @@ def listen_once(timeout: int = 8, phrase_time_limit: int = 10) -> str:
     except Exception as e:
         ralog.log("err", f"speech recognition failed: {e}")
         return ""
+

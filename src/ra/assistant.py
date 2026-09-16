@@ -242,7 +242,7 @@ def _processor():
         # instantly, but whisper usually produces a better transcript within a
         # second or two. Wait just long enough to catch it before acting, so
         # commands are both snappy AND accurate.
-        key = text.strip().lower()
+        key = _corr_key(text)
         if key in _queued_stt:
             _queued_stt.discard(key)
             if key in _corrections:
@@ -383,10 +383,18 @@ def _drain_tts():
         _tts_queue.task_done()
 
 
+def _corr_key(text: str) -> str:
+    """Canonical key for the STT correction map. Every producer and consumer
+    MUST derive keys through this same helper so they always agree even when
+    the source text carries a wake word and/or mixed case; otherwise whisper
+    corrections never land and the queues grow without bound."""
+    return _strip_wake(text).strip().lower()
+
+
 def _on_correct(original: str, corrected: str):
     """Whisper found a better transcript for an already-dispatched Vosk phrase:
     remember it so the processor can upgrade the command before acting."""
-    _corrections[original.strip().lower()] = corrected
+    _corrections[_corr_key(original)] = corrected.strip().lower()
     ralog.log("voice", f"corrected: '{original}' -> '{corrected}'")
 
 
@@ -407,12 +415,12 @@ def _on_phrase(text: str):
     if _contains_wake(lower):
         remainder = _strip_wake(text)
         command_queue.put(remainder if remainder else lower)
-        _queued_stt.add(remainder if remainder else lower)
+        _queued_stt.add(_corr_key(remainder if remainder else lower))
         _extend_conversation()
     elif _conversation_active():
         # Hands-free follow-up: no wake word needed.
         command_queue.put(text)
-        _queued_stt.add(text)
+        _queued_stt.add(_corr_key(text))
         _extend_conversation()
     # else: ambient chatter while idle - politely ignored.
 

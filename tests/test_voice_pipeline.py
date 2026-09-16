@@ -2,6 +2,7 @@
 streaming, barge-in / echo guard. Skipped automatically when the audio deps
 (numpy / sounddevice) are absent — keeps the suite installable bare."""
 
+import queue
 import threading
 import time
 
@@ -29,6 +30,39 @@ def _reset():
 def test_split_sentences():
     assert audio_io.split_sentences("One. Two. Three") == ["One.", "Two.", "Three"]
     assert audio_io.split_sentences("") == []
+
+
+def test_whisper_vad_finalize_does_not_deadlock(monkeypatch):
+    """Always-on whisper-VAD hearing must survive the end of an utterance:
+    _finalize_utterance is called while _process holds the clip lock, so a plain
+    Lock deadlocks the mic thread at the FIRST phrase and freezes continuous
+    hearing forever (regression for the RLock fix)."""
+    import numpy as np
+
+    monkeypatch.setattr(audio_io.config, "STT_PAUSE_THRESHOLD", 0.05)
+    monkeypatch.setattr(audio_io.config, "STT_MIN_SPEECH_SECONDS", 0.0)
+
+    s = audio_io._WhisperVADStream(on_phrase=lambda t: None,
+                                   on_partial=lambda t: None)
+    s._noise = 0.0
+    s._tx_q = queue.Queue()
+
+    def _block(level):
+        return np.full(2048, int(level * 1200), dtype=np.int16)
+
+    def _feed_with_pause(blocks):
+        for b in blocks:
+            s._process(b)
+            time.sleep(0.03)  # let the pause gate see real elapsed time
+
+    blocks = [_block(0.02), _block(0.02), _block(0.0001),
+              _block(0.0001), _block(0.0001)]
+    t = threading.Thread(target=_feed_with_pause, daemon=True, args=(blocks,))
+    t.start()
+    t.join(timeout=3.0)
+    assert not t.is_alive(), "whisper-VAD mic thread deadlocked at phrase end"
+    assert not s._clip, "utterance clip was not cleared on finalize"
+    assert s._tx_q.qsize() == 1, "finalized audio was not queued for transcription"
 
 
 def test_pop_sentences_streams():

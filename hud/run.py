@@ -112,7 +112,7 @@ class _HudApi:
         except Exception:
             pass
         try:
-            self._main.set_on_top(mode in ("dock", "widget"))
+            self._main.set_on_top(True)
         except Exception:
             pass
 
@@ -141,7 +141,7 @@ class _HudApi:
     def expand(self):
         """Orb clicked → return to the full main HUD."""
         try:
-            self._main.set_on_top(False)
+            self._main.set_on_top(True)
         except Exception:
             pass
         self._main.resize(*_MAIN_SIZE["full"])
@@ -233,6 +233,7 @@ def _main():
         height=_MAIN_SIZE["full"][1],
         min_size=(150, 150),
         frameless=True,
+        on_top=True,
         easy_drag=False,
         background_color="#08090d",
         text_select=True,
