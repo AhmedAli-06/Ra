@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ra Hero</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Sora:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    font-family: 'Sora', sans-serif;
+    background: radial-gradient(1200px 600px at 22% 50%, rgba(217,101,0,0.10), transparent 60%),
+                radial-gradient(900px 500px at 80% 110%, rgba(230,115,0,0.06), transparent 55%),
+                #08090d;
+    color: #e1e2ec;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 96px 0 64px;
+    position: relative;
+  }
+  .scanlines {
+    position: absolute; inset: 0;
+    background: linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.28) 50%);
+    background-size: 100% 4px;
+    pointer-events: none;
+  }
+  #orbStage { width: 300px; height: 300px; position: relative; flex: 0 0 300px; }
+  #orbStage canvas { width: 300px !important; height: 300px !important; }
+  #aura {
+    position: absolute; top: 50%; left: 50%;
+    width: 300px; height: 300px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: rgba(217, 101, 0, 0.20);
+    filter: blur(50px);
+    animation: auraPulse 3.2s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes auraPulse {
+    0%, 100% { opacity: 0.55; transform: translate(-50%, -50%) scale(1); }
+    50%      { opacity: 0.9;  transform: translate(-50%, -50%) scale(1.12); }
+  }
+  .tag { font-family: 'JetBrains Mono', monospace; }
+  .kicker {
+    font-size: 13px; letter-spacing: 0.42em; text-transform: uppercase;
+    color: #ff9a3d; font-weight: 500; margin-bottom: 18px;
+  }
+  h1 {
+    font-size: 108px; font-weight: 800; line-height: 0.95;
+    letter-spacing: -0.04em;
+    background: linear-gradient(180deg, #ffffff 30%, #ffb066 75%, #d96500);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+  }
+  .tagline {
+    margin-top: 22px; font-size: 22px; font-weight: 300; color: #b9bbcc;
+    max-width: 26ch;
+  }
+  .tagline b { color: #ffb066; font-weight: 600; }
+  .meta {
+    margin-top: 30px; font-size: 12.5px; color: #6e7084;
+    letter-spacing: 0.08em; display: flex; gap: 22px;
+  }
+  .meta span { white-space: nowrap; }
+  .meta em { color: #d96500; font-style: normal; }
+  .divider { width: 1px; height: 12px; background: #2a2c3a; align-self: center; }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div id="orbStage"><div id="aura"></div></div>
+<div>
+  <div class="kicker tag">Neural command interface &middot; v1.0</div>
+  <h1>Ra</h1>
+  <div class="tagline">Your voice-and-vision assistant that lives <b>on your PC</b> &mdash; and acts on your desktop.</div>
+  <div class="meta tag">
+    <span><em>RAG</em> over local files</span><span class="divider"></span>
+    <span><em>Voice</em> STT/TTS</span><span class="divider"></span>
+    <span><em>Screen</em> vision + OCR</span><span class="divider"></span>
+    <span><em>Private</em> by design</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var stage = document.getElementById('orbStage');
+  var dotTex = (function () {
+    var c = document.createElement('canvas');
+    c.width = c.height = 64;
+    var ctx = c.getContext('2d');
+    var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  })();
+
+  var scene, camera, renderer, coreGroup, outerSwarm, cage1, singularity, auraMesh, gimbalGroup;
+  var ringNodes = [], ringMeshes = [];
+
+  function buildOrb() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    camera.position.set(0, 0, 140);
+    camera.lookAt(0, 0, 0);
+    coreGroup = new THREE.Group();
+    scene.add(coreGroup);
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setSize(300, 300);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setClearColor(0x08090d, 1);
+    stage.appendChild(renderer.domElement);
+
+    var count = 520;
+    var pos = new Float32Array(count * 3);
+    var col = new Float32Array(count * 3);
+    var goldenRatio = (1 + Math.sqrt(5)) / 2;
+    var goldenAngle = 2 * Math.PI * (1 - 1 / goldenRatio);
+    var SC = 1.6;
+    for (var i = 0; i < count; i++) {
+      var phi = Math.acos(1 - 2 * (i + 0.5) / count);
+      var theta = goldenAngle * i;
+      var r = 35 * SC * (1 + ((i % 5) - 2) * 0.02);
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.cos(phi);
+      pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+      col[i * 3] = 1.0; col[i * 3 + 1] = 0.52; col[i * 3 + 2] = 0.05;
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    var mat = new THREE.PointsMaterial({ size: 8, map: dotTex, vertexColors: true, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
+    outerSwarm = new THREE.Points(geo, mat);
+    coreGroup.add(outerSwarm);
+
+    var cageGeo = new THREE.IcosahedronGeometry(20 * SC, 1);
+    var cageMat = new THREE.MeshBasicMaterial({ color: 0xff7700, wireframe: true, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending });
+    cage1 = new THREE.Mesh(cageGeo, cageMat);
+    coreGroup.add(cage1);
+
+    var singGeo = new THREE.SphereGeometry(6 * SC, 16, 16);
+    var singMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.98, blending: THREE.AdditiveBlending });
+    singularity = new THREE.Mesh(singGeo, singMat);
+    coreGroup.add(singularity);
+
+    var auraGeo = new THREE.SphereGeometry(10.5 * SC, 16, 16);
+    var auraMat = new THREE.MeshBasicMaterial({ color: 0xff7700, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, side: THREE.BackSide });
+    auraMesh = new THREE.Mesh(auraGeo, auraMat);
+    coreGroup.add(auraMesh);
+
+    gimbalGroup = new THREE.Group();
+    function ring(radius, tube, color, opacity, vx, vy, vz) {
+      var pivot = new THREE.Group();
+      var g = new THREE.TorusGeometry(radius, tube, 12, 64);
+      var m = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: opacity, blending: THREE.AdditiveBlending });
+      var mesh = new THREE.Mesh(g, m);
+      pivot.add(mesh);
+      gimbalGroup.add(pivot);
+      ringMeshes.push(mesh);
+      ringNodes.push({ pivot: pivot, vx: vx, vy: vy, vz: vz });
+    }
+    ring(45 * SC, 1.2, 0xff8c00, 0.8, 0.007, 0.012, 0.006);
+    ring(48 * SC, 1.1, 0xd96500, 0.7, -0.01, 0.008, 0.009);
+    ring(39 * SC, 1.0, 0xffaa00, 0.65, 0.009, -0.01, -0.007);
+    coreGroup.add(gimbalGroup);
+  }
+
+  var t = 0;
+  var cidle = new THREE.Color(0xffecd0);
+  function animate() {
+    t += 0.016;
+    outerSwarm.rotation.y = t * 0.08;
+    outerSwarm.rotation.x = t * 0.04;
+    if (cage1) { cage1.rotation.y += 0.016; cage1.rotation.x -= 0.011; cage1.material.color.lerp(cidle, 0.1); }
+    var pulse = 1.0 + Math.sin(t * 2.0) * 0.2;
+    if (singularity) { singularity.scale.set(pulse, pulse, pulse); singularity.material.color.setHex(0xffecd0); }
+    if (auraMesh) { auraMesh.scale.set(pulse * 1.5, pulse * 1.5, pulse * 1.5); auraMesh.material.color.copy(cidle); }
+    ringNodes.forEach(function (n) { n.pivot.rotation.x += n.vx; n.pivot.rotation.y += n.vy; n.pivot.rotation.z += n.vz; });
+    ringMeshes.forEach(function (m) { m.material.color.lerp(cidle, 0.1); });
+    var cols = outerSwarm.geometry.attributes.color.array;
+    for (var i = 0; i < cols.length; i += 3) {
+      cols[i] += (cidle.r - cols[i]) * 0.1;
+      cols[i + 1] += (cidle.g - cols[i + 1]) * 0.1;
+      cols[i + 2] += (cidle.b - cols[i + 2]) * 0.1;
+    }
+    outerSwarm.geometry.attributes.color.needsUpdate = true;
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
+  buildOrb();
+  animate();
+})();
+</script>
+</body>
+</html>
