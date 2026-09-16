@@ -16,6 +16,7 @@
     {"id": 4, "name": "Download parakeet model to ~/.ra/models", "status": "in_progress", "progress": "download ABORTED by user; partial file sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2 ~79MB (needs ~750MB) - DELETE and re-download"},
     {"id": 5, "name": "Clone omi repo for reuse study", "status": "done", "progress": "blobless+sparse clone at Temp\\opencode\\omi; sparse dirs: app backend mcp web desktop plugins sdks config contracts"},
     {"id": 6, "name": "Omi capability inventory + mapping to Ra (add/replace/keep)", "status": "not_started", "notes": "trees listed; deep file reads not yet done"},
+    {"id": 10, "name": "REPO SPLIT: Ra frozen as pre-omi baseline; Ra-omi worktree created", "status": "done", "notes": "this repo committed at feff3ce (STT/device fixes); Ra-omi at C:\\Users\\mdahm\\OneDrive\\Documents\\Ra-omi with own git (baseline 91d6eab + INIT.md e71b8e9); all omi work goes there"},
     {"id": 7, "name": "Implement STT engine layer in config.py + audio_io.py (sherpa default, vosk fallback, groq final)", "status": "not_started", "notes": "design decided: _SherpaStream modeled on MicSession, gate preserved, models next to exe for build"},
     {"id": 8, "name": "Tests (pytest on Store 3.13) + live capture verify + bundle sherpa into spec + rebuild exe + user by-ear verify", "status": "not_started"},
     {"id": 9, "name": "Omi V2 architecture + pillars B1 memory / B2 apps / B3 personas / B4 mcp / B6 HUD + tests/rebuild/verify", "status": "not_started"}
@@ -42,15 +43,12 @@
     {"decision": "Keep Ra's noise classifier / gate (fan-proof, scream-proof) untouched; sherpa consumes the same gated pipeline as vosk did - phrase boundary via sherpa endpoint rules, keep sustained-speech + _is_human_audio backstops", "rationale": "do not mess up what works (cooler rejection, scream acceptance)", "phase": null},
     {"decision": "Model placement: dev uses ~/.ra/models; release bundles model NEXT TO exe (hud/dist/models/...) rather than inside Ra.exe (keeps 345MB exe from ballooning to ~1.1GB)", "rationale": "PyInstaller onefile size/launch cost", "phase": null},
     {"decision": "Omi = additive V2 layer in Ra (src/ra/omi/), replace only where omi is strictly better; pillars B1 memory, B2 apps/chat-tools, B3 personas, B4 mcp (omi mcp/ has own SDK), B6 HUD", "rationale": "user: keep Ra as it is, add as new version", "phase": null},
+    {"decision": "REPO SPLIT: this Ra folder stays the frozen PRE-OMI baseline (voice continuous-convo fix + STT/device work, commit feff3ce). Omi integration is built in a SEPARATE folder C:\\Users\\mdahm\\OneDrive\\Documents\\Ra-omi (own git repo, baseline 91d6eab, INIT.md). STT engine swap continues HERE as Ra's own fix, then sync into Ra-omi; no omi code ever touches the Ra baseline", "rationale": "user: 'let everything here be as it was before omi, start omi in another folder containing Ra at the voice-continuous-convo-fixed state'", "phase": null},
     {"decision": "Exe rebuild requires: kill Ra processes first; build_exe.bat copies project .env -> ~/.ra/.env (so RA_STT_DEBUG etc survive)", "rationale": "learned earlier: locked-exe errors, env propagation", "phase": null}
   ],
   "uncommitted_files": [
-    "hud/run.py",
-    "hud/server.py",
-    "src/ra/audio_io.py",
-    "src/ra/config.py",
-    "tests/test_voice_pipeline.py",
-    "mic_diag_out.txt (untracked, junk)"
+    ".planning/HANDOFF.json + .planning/.continue-here.md (WIP handoff update for repo split)",
+    "WORKING TREE IS COMMITTED: baseline fixes land in feff3ce; rest clean"
   ],
   "next_action": "Delete partial ~/.ra/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2, re-download full (~750MB), then add sherpa/Groq constants to config.py and implement _SherpaStream + dispatch + listen_once in audio_io.py; run pytest; install sherpa-onnx into Store 3.13; rebuild exe; user verifies by ear",
   "context_notes": "Two-track work: (A) finish STT engine swap so user hears correctly, (B) then replicate omi. Subagent infra broken - research inline. Omi clone is blobless+sparse; do not add docs/ to sparse set (timed out). sherpa endpoint rules are INLINE in OnlineRecognizer.from_transducer (no EndpointConfig class). Dev interpreter = pythoncore-3.14-64 (mic-capable, now has sherpa-onnx 1.13.8); build/test = Store 3.13 (AppContainer, mic-blocked, needs sherpa-onnx pip install before rebuild)."
