@@ -271,8 +271,8 @@ ASSISTANT_NAME = "Ra"                 # "Ra" - so very proper
 # conversation that then flows for the whole session without repeating it.
 # Override: RA_WAKE_WORDS=fire up,ra
 WAKE_WORDS = [w.strip().lower() for w in
-              _env("RA_WAKE_WORDS", "fire up").split(",") if w.strip()]
-WAKE_WORD = WAKE_WORDS[0] if WAKE_WORDS else "fire up"  # deprecated single-word alias
+              _env("RA_WAKE_WORDS", "fire up, ra, hey ra, rah, raw, ray, rad, rock").split(",") if w.strip()]
+WAKE_WORD = WAKE_WORDS[0] if WAKE_WORDS else "fire up"  # default wake word
 LAUNCH_PHRASE = "fire up"                # say this to launch the app from the background listener
 SYSTEM_PROMPT = (
     "You are Ra, the user's personal AI butler and systems agent - the "
@@ -454,18 +454,46 @@ EDGE_TTS_RATE = "-8%"                    # a touch slower = smoother cadence
 EDGE_TTS_PITCH = "+0Hz"
 
 # --- Voice (speech-to-text) ---
-# "vosk" = streaming STT (instant partials, phrase events - the fast path).
-# "whisper" = fallback batch transcription (heavier, slower).
-STT_ENGINE = _env("RA_STT_ENGINE", "vosk").lower()
+# "sherpa-onnx" = default hybrid STT. Live partials come from sherpa-onnx's
+#   streaming fast-conformer transducer (on-device, instant, English); the
+#   FINAL text is then refined by the offline NVIDIA parakeet model (see
+#   STT_FINAL_ENGINE) which adds punctuation + capitalization and is far more
+#   accurate than vosk-small.
+# "vosk" = legacy streaming fallback. "whisper" = batch transcription via
+#   faster-whisper (heavier, slower, no partials).
+STT_ENGINE = _env("RA_STT_ENGINE", "sherpa-onnx").lower()
+STT_CONTINUOUS_ENGINE = _env("RA_STT_CONTINUOUS_ENGINE", "vosk").lower()
 VOSK_MODEL_ID = "vosk-model-small-en-us-0.15"
 VOSK_MODEL_URL = "https://alphacephei.com/vosk/models/" + VOSK_MODEL_ID + ".zip"
 VOSK_MODEL_DIR = os.path.join(DATA_DIR, "models")
-# Hybrid accuracy: Vosk streams live partials and detects when a phrase ends,
-# then faster-whisper re-transcribes the buffered audio for the FINAL text.
-# This is dramatically more accurate than the tiny Vosk model alone while
-# keeping the instant live "hearing" feel. Set RA_STT_FINAL=off to keep
-# raw Vosk finals (lower latency, lower accuracy).
-STT_FINAL_ENGINE = _env("RA_STT_FINAL", "whisper").lower()
+# sherpa-onnx needs both the Python package and the onnx model bundles. The
+# ONLINE bundle (fast-conformer transducer) drives live partials; the OFFLINE
+# parakeet bundle refines each finalized phrase (STT_FINAL_ENGINE="parakeet").
+SHERPA_ONNX_MODEL_ID = "sherpa-onnx-nemo-streaming-fast-conformer-transducer-" \
+                       "en-480ms-int8"
+SHERPA_ONNX_MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/"
+                         "download/asr-models/" + SHERPA_ONNX_MODEL_ID + ".tar.bz2")
+SHERPA_ONNX_MODEL_DIR = os.path.join(DATA_DIR, "models")
+SHERPA_OFFLINE_MODEL_ID = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
+SHERPA_OFFLINE_MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/"
+                            "download/asr-models/" + SHERPA_OFFLINE_MODEL_ID + ".tar.bz2")
+SHERPA_OFFLINE_MODEL_DIR = os.path.join(DATA_DIR, "models")
+# Optional noise reduction for sherpa (NoiseReducer / GTCRN). Off by default
+# because the existing band-based gate already filters fan hum.
+STT_DENOISE = _env("RA_STT_DENOISE", "0") != "0"
+# Hybrid accuracy: the STT engine streams live partials and detects when a
+# phrase ends; the FINAL text then comes from an optional higher-accuracy pass.
+#   "parakeet" (default) -> offline NVIDIA parakeet re-transcribes the clip
+#       (punctuation + capitalization, most accurate).
+#   "sherpa"            -> the sherpa streaming result IS the final (no extra
+#       pass; lowest latency).
+#   "whisper"           -> faster-whisper re-transcribes the buffered clip.
+#   "groq"              -> optional cloud final via Groq Whisper
+#       (whisper-large-v3-turbo, requires RA_GROQ_API_KEY).
+#   "off"               -> alias of "sherpa" (raw stream result).
+STT_FINAL_ENGINE = _env("RA_STT_FINAL", "parakeet").lower()
+GROQ_WHISPER_MODEL = _env("RA_GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+GROQ_WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 # base.en = fast (already-cached) and markedly more accurate than the tiny Vosk
 # model; small.en is ~4x slower to transcribe but top accuracy. Preload runs at
 # boot so corrections are ready before the user speaks. Override: RA_WHISPER_MODEL.
@@ -476,14 +504,14 @@ STT_PAUSE_THRESHOLD = 0.8
 # many seconds. Background noise blips (typing, slams, coughing) end a Vosk
 # utterance instantly - without this gate they turn into fake "phrases" that
 # interrupt the conversation. Env: RA_STT_MIN_SPEECH_SECONDS.
-STT_MIN_SPEECH_SECONDS = float(_env("RA_STT_MIN_SPEECH_SECONDS", "0.4"))
+STT_MIN_SPEECH_SECONDS = float(_env("RA_STT_MIN_SPEECH_SECONDS", "0.15"))
 STT_UTTERANCE_BUFFER_SECONDS = 30        # rolling buffer for re-transcription
 # Room-noise calibration. Modulation alone only confirms WEAK audio: a steady
 # fan / AC / cooler hum is flat (low CV) and is never treated as speech, while
 # a speaker arguing over it is modulated and still heard. 0 disables the
 # modulation gate (older lenient behavior, more fan false-positives).
 # Env: RA_STT_MODULATION (0.0-1.0, higher = stricter).
-STT_MODULATION_THRESHOLD = float(_env("RA_STT_MODULATION", "0.10"))
+STT_MODULATION_THRESHOLD = float(_env("RA_STT_MODULATION", "0.05"))
 # A block whose mean amplitude is at/above this is ALWAYS "speech" - screams,
 # shouts and close-talking must be heard regardless of envelope shape (a held
 # shout has a nearly flat envelope and must not be gated out). Absolute mean
@@ -497,7 +525,7 @@ STT_MIN_SIGNAL_LEVEL = float(_env("RA_STT_MIN_SIGNAL", "0.005"))
 # Speech/ambient band ratio: audio well above the tracked room level (fan hum,
 # talking people nearby) counts as speech without needing envelope proof.
 # Env: RA_STT_NOISE_RATIO (higher = only much louder input is auto-accepted).
-STT_NOISE_RATIO = float(_env("RA_STT_NOISE_RATIO", "1.8"))
+STT_NOISE_RATIO = float(_env("RA_STT_NOISE_RATIO", "1.0"))
 # Loud-audio ceiling for the noise floor: any block at/above `noise * NOISE_UP`
 # never moves the floor, so a shout or running speech can NEVER lift Ra's
 # hearing threshold (this is what made it go deaf mid-conversation before).

@@ -28,7 +28,7 @@ An LLM brain (Gemini / Groq, via your own API key) answers from a local RAG inde
 
 | | |
 |---|---|
-| 🎙️ **Voice-first** | Hands-free conversations with an always-on wake word — streaming STT (Vosk), Whisper finalize, and instant neural TTS (Edge / local fallbacks). |
+| 🎙️ **Voice-first** | Hands-free conversations with an always-on wake word — streaming STT (sherpa-onnx fast-conformer with offline parakeet final, vosk fallback), optional Groq Whisper finalize, and instant neural TTS (Edge / local fallbacks). |
 | 🧠 **RAG over your files** | Index local folders (md, pdf, code, csv, logs…) into a pure-stdlib SQLite semantic store. Ask in natural language; answers are grounded in **your** data. |
 | 👁️ **Sees your screen** | OCRs the visible desktop for context, and — with consent — *drives* the UI visually: screenshot → model decides the click → post-click verification. |
 | ⚡ **Takes real actions** | 85+ skills across 15 categories: launch apps, media control, system telemetry, battery, weather, web lookups, and more. |

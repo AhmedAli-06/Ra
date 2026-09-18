@@ -82,7 +82,7 @@ def test_access_defaults_are_consent_gated():
 
 def test_voice_defaults_natural_and_streaming():
     assert config.TTS_ENGINE == "edge-tts"
-    assert config.STT_ENGINE == "vosk"
+    assert config.STT_ENGINE == "sherpa-onnx"
     assert config.EDGE_TTS_VOICE != "en-US-AndrewMultilingualNeural"
 
 

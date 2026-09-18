@@ -325,13 +325,17 @@ def _on_tool(name: str, args: dict, result: str):
 
 
 def _wait_correction(key: str, base_timeout=None):
-    """Block up to the correction grace period for a whisper transcript of an
-    STT phrase. Returns the corrected text or None (proceed with Vosk text)."""
+    """Block up to the correction grace period for a finalize-pass transcript
+    of an STT phrase (whisper or groq). Returns the corrected text or None
+    (proceed with the streaming engine's own text - sherpa's result IS already
+    a punctuation/capitalized final, it just doesn't wait for optional passes)."""
     from ra import config as _cfg
     from ra import audio_io
-    if getattr(_cfg, "STT_FINAL_ENGINE", "whisper") != "whisper":
+    final_engine = getattr(_cfg, "STT_FINAL_ENGINE", "sherpa").lower()
+    if final_engine not in ("whisper", "groq"):
         return None
-    if not getattr(audio_io, "whisper_available", False):
+    if final_engine == "whisper" \
+            and not getattr(audio_io, "whisper_available", False):
         return None  # model not loaded yet - don't stall on the first phrase
     grace = base_timeout if base_timeout is not None else float(
         getattr(_cfg, "STT_CORRECTION_GRACE", 3.0))
@@ -427,6 +431,10 @@ def _on_phrase(text: str):
 
 def _on_partial(text: str):
     _post_partial(f"… {text}")
+    if text and _contains_wake(text):
+        # Heard the wake word mid-speech: keep the hands-free window open so
+        # the finished (gate-driven) phrase follows up without a second wake.
+        _extend_conversation()
 
 
 def _mic_worker():
@@ -517,11 +525,19 @@ def main():
         except Exception:
             tts = "(edge-tts missing)"
         stt_loaded = []
-        try:
-            audio_io._get_vosk()
-            stt_loaded.append("vosk")
-        except Exception as e:
-            stt_loaded.append(f"vosk-FAIL({type(e).__name__})")
+        engine = getattr(config, "STT_ENGINE", "sherpa-onnx").lower()
+        if engine == "sherpa-onnx":
+            try:
+                audio_io._get_sherpa()
+                stt_loaded.append("sherpa-onnx")
+            except Exception as e:
+                stt_loaded.append(f"sherpa-FAIL({type(e).__name__})")
+        if engine == "vosk" or getattr(config, "STT_FINAL_ENGINE", "sherpa") == "vosk":
+            try:
+                audio_io._get_vosk()
+                stt_loaded.append("vosk")
+            except Exception as e:
+                stt_loaded.append(f"vosk-FAIL({type(e).__name__})")
         if config.STT_FINAL_ENGINE == "whisper":
             try:
                 audio_io._get_whisper_model()

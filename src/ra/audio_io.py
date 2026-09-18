@@ -504,6 +504,9 @@ _vosk_model = None
 _vosk_init_lock = threading.Lock()
 _whisper_model = None
 whisper_available = False          # True once the whisper model has loaded
+_sherpa_recognizer = None
+_sherpa_offline_recognizer = None
+_sherpa_init_lock = threading.Lock()
 
 
 def _download_vosk_model() -> str:
@@ -558,6 +561,163 @@ def _get_vosk():
                     )
                 _vosk_model = vosk.Model(_download_vosk_model())
     return _vosk_model
+
+
+def _download_sherpa_model() -> str:
+    """Download (or reuse) the sherpa-onnx streaming fast-conformer bundle into
+    ~/.ra/models. The asset is a .tar.bz2 bundle that extracts to a folder
+    named after SHERPA_ONNX_MODEL_ID."""
+    import tarfile
+
+    tarball = os.path.join(config.SHERPA_ONNX_MODEL_DIR,
+                           config.SHERPA_ONNX_MODEL_ID + ".tar.bz2")
+    model_path = os.path.join(config.SHERPA_ONNX_MODEL_DIR,
+                              config.SHERPA_ONNX_MODEL_ID)
+    os.makedirs(config.SHERPA_ONNX_MODEL_DIR, exist_ok=True)
+    if os.path.isdir(model_path):
+        return model_path
+    if os.path.exists(tarball):
+        os.remove(tarball)
+        ralog.log("warn", "Incomplete sherpa streaming model tarball removed - "
+                          "re-downloading.")
+    part = tarball + ".part"
+    ralog.log("voice", f"Downloading sherpa-onnx streaming model "
+                       f"({config.SHERPA_ONNX_MODEL_ID})...")
+    import requests
+    with requests.get(config.SHERPA_ONNX_MODEL_URL, stream=True, timeout=120) as r:
+        r.raise_for_status()
+        total = int(r.headers.get("content-length", 0))
+        got = 0
+        with open(part, "wb") as f:
+            for chunk in r.iter_content(chunk_size=262144):
+                f.write(chunk)
+                got += len(chunk)
+                if total:
+                    percent = got / total
+                    ralog.log("voice", f"sherpa download {percent:.0%}")
+    os.replace(part, tarball)
+    _extract_sherpa_tar(tarball)
+    ralog.log("ok", "Sherpa-onnx streaming model ready.")
+    return model_path
+
+
+def _download_sherpa_offline_model() -> str:
+    """Download (or reuse) the sherpa-onnx offline parakeet bundle into
+    ~/.ra/models. Used for the refined final pass of the hybrid STT."""
+    tarball = os.path.join(config.SHERPA_OFFLINE_MODEL_DIR,
+                           config.SHERPA_OFFLINE_MODEL_ID + ".tar.bz2")
+    model_path = os.path.join(config.SHERPA_OFFLINE_MODEL_DIR,
+                              config.SHERPA_OFFLINE_MODEL_ID)
+    os.makedirs(config.SHERPA_OFFLINE_MODEL_DIR, exist_ok=True)
+    if os.path.isdir(model_path):
+        return model_path
+    if os.path.exists(tarball):
+        os.remove(tarball)
+        ralog.log("warn", "Incomplete sherpa offline model tarball removed - "
+                          "re-downloading.")
+    part = tarball + ".part"
+    ralog.log("voice", f"Downloading sherpa-onnx offline model "
+                       f"({config.SHERPA_OFFLINE_MODEL_ID})...")
+    import requests
+    with requests.get(config.SHERPA_OFFLINE_MODEL_URL, stream=True,
+                      timeout=120) as r:
+        r.raise_for_status()
+        total = int(r.headers.get("content-length", 0))
+        got = 0
+        with open(part, "wb") as f:
+            for chunk in r.iter_content(chunk_size=262144):
+                f.write(chunk)
+                got += len(chunk)
+                if total:
+                    percent = got / total
+                    ralog.log("voice", f"sherpa offline download {percent:.0%}")
+    os.replace(part, tarball)
+    _extract_sherpa_tar(tarball)
+    ralog.log("ok", "Sherpa-onnx offline model ready.")
+    return model_path
+
+
+def _extract_sherpa_tar(tarball: str):
+    """Extract a sherpa .tar.bz2 bundle into config.SHERPA_ONNX_MODEL_DIR."""
+    import tarfile
+    with tarfile.open(tarball, "r:bz2") as tf:
+        tf.extractall(config.SHERPA_ONNX_MODEL_DIR)
+
+
+def _get_sherpa() -> "sherpa_onnx.OnlineRecognizer":
+    """Lazy-load the sherpa-onnx streaming recognizer
+    (fast-conformer-transducer-en-480ms-int8). Raises RuntimeError with a clear
+    message if the package is missing or the model cannot be obtained."""
+    global _sherpa_recognizer
+    if _sherpa_recognizer is None:
+        with _sherpa_init_lock:
+            if _sherpa_recognizer is None:
+                try:
+                    import sherpa_onnx  # noqa: F401
+                except ImportError:
+                    raise RuntimeError(
+                        "sherpa-onnx STT is not installed. Run "
+                        "`pip install sherpa-onnx` or set RA_STT_ENGINE=vosk.",
+                    )
+                model_path = _download_sherpa_model()
+                import os as _os
+                from sherpa_onnx import OnlineRecognizer
+                tokens = _os.path.join(model_path, "tokens.txt")
+                encoder = _os.path.join(model_path,
+                                        "encoder.int8.onnx")
+                decoder = _os.path.join(model_path, "decoder.int8.onnx")
+                joiner = _os.path.join(model_path, "joiner.int8.onnx")
+                _sherpa_recognizer = OnlineRecognizer.from_transducer(
+                    tokens=tokens,
+                    encoder=encoder,
+                    decoder=decoder,
+                    joiner=joiner,
+                    num_threads=2,
+                    sample_rate=_SAMPLE_RATE,
+                    feature_dim=80,
+                    enable_endpoint_detection=True,
+                    rule1_min_trailing_silence=2.4,
+                    rule2_min_trailing_silence=1.2,
+                    rule3_min_utterance_length=20.0,
+                )
+    return _sherpa_recognizer
+
+
+def _get_sherpa_offline() -> "sherpa_onnx.OfflineRecognizer":
+    """Lazy-load the sherpa-onnx offline recognizer (parakeet-tdt-0.6b-v2-int8)
+    used to refine finalized phrases in the hybrid STT pipeline. Raises
+    RuntimeError with a clear message if the package is missing or the model
+    cannot be obtained."""
+    global _sherpa_offline_recognizer
+    if _sherpa_offline_recognizer is None:
+        with _sherpa_init_lock:
+            if _sherpa_offline_recognizer is None:
+                try:
+                    import sherpa_onnx  # noqa: F401
+                except ImportError:
+                    raise RuntimeError(
+                        "sherpa-onnx STT is not installed. Run "
+                        "`pip install sherpa-onnx` or set RA_STT_ENGINE=vosk.",
+                    )
+                model_path = _download_sherpa_offline_model()
+                import os as _os
+                from sherpa_onnx import OfflineRecognizer
+                tokens = _os.path.join(model_path, "tokens.txt")
+                encoder = _os.path.join(model_path,
+                                        "encoder.int8.onnx")
+                decoder = _os.path.join(model_path, "decoder.int8.onnx")
+                joiner = _os.path.join(model_path, "joiner.int8.onnx")
+                _sherpa_offline_recognizer = OfflineRecognizer.from_transducer(
+                    tokens=tokens,
+                    encoder=encoder,
+                    decoder=decoder,
+                    joiner=joiner,
+                    num_threads=2,
+                    sample_rate=_SAMPLE_RATE,
+                    feature_dim=128,
+                    model_type="nemo_transducer",
+                )
+    return _sherpa_offline_recognizer
 
 
 def _get_whisper_model():
@@ -1067,6 +1227,32 @@ def _is_human_audio(audio) -> bool:
     return _energy_cv(audio) >= config.STT_MODULATION_THRESHOLD
 
 
+def _contains_wake(text: str) -> bool:
+    if not text:
+        return False
+    try:
+        from ra.assistant import _contains_wake as assistant_contains_wake
+        return assistant_contains_wake(text)
+    except Exception:
+        lower = text.lower().strip()
+        wake_words = ("ra", "hey ra", "fire up", "rah", "raw", "ray", "rad", "rock")
+        return any(w in lower for w in wake_words)
+
+
+def _is_valid_speech(text: str, audio, sustained: float, min_speech: float) -> bool:
+    if not text:
+        return False
+    # A recognized phrase containing a wake word is ALWAYS valid speech (e.g. "ra")
+    if _contains_wake(text):
+        return True
+    # Non-wake phrases (noise blips, ambient sounds) must meet sustained speech duration
+    if min_speech > 0 and sustained < min_speech:
+        return False
+    if audio is not None and not _is_human_audio(audio):
+        return False
+    return True
+
+
 class MicSession:
     """Continuous streaming STT session. Fires on_partial(text) live and
     on_phrase(text) each time a complete phrase is recognized.
@@ -1198,28 +1384,33 @@ class MicSession:
             return audio if audio.shape[0] >= _SAMPLE_RATE * 0.2 else None
 
     def _finalize(self, vosk_text: str, audio):
-        """Whisper re-transcribes ONLY the finished phrase's audio (parallel to
+        """Offline re-transcribes ONLY the finished phrase's audio (parallel to
         the already-dispatched Vosk text). If the result is meaningfully
         different, tell the assistant so it can upgrade the pending phrase."""
-        if not vosk_text or config.STT_FINAL_ENGINE != "whisper" \
-                or self.busy_check():
+        if not vosk_text or self.busy_check():
             return
         if audio is None or audio.shape[0] < _SAMPLE_RATE * 0.3:
             return
+        fin = getattr(config, "STT_FINAL_ENGINE", "parakeet").lower()
         try:
-            model = _get_whisper_model()
-            segments, _info = model.transcribe(
-                audio, language="en", beam_size=1, vad_filter=True)
-            wtext = " ".join(seg.text for seg in segments).strip()
+            if fin == "groq":
+                wtext = _groq_transcribe(audio)
+            elif fin == "parakeet":
+                wtext = _transcribe_sherpa_offline(audio)
+            else:
+                model = _get_whisper_model()
+                segments, _info = model.transcribe(
+                    audio, language="en", beam_size=1, vad_filter=True)
+                wtext = " ".join(seg.text for seg in segments).strip()
             if wtext and wtext.lower().strip() != vosk_text.lower().strip():
-                ralog.log("voice", f"vosk: '{vosk_text}' -> whisper: '{wtext}'")
+                ralog.log("voice", f"vosk: '{vosk_text}' -> {fin}: '{wtext}'")
                 self.on_correct(vosk_text, wtext)
         except Exception as e:
-            ralog.log("warn", f"whisper finalize failed ({e}); keeping vosk text")
+            ralog.log("warn", f"{fin} finalize failed ({e}); keeping vosk text")
 
     # -- streaming ----------------------------------------------------------
     def _finalize_worker(self):
-        """Whisper re-transcription runs OFF the audio callback (a CPU-heavy
+        """Offline re-transcription runs OFF the audio callback (a CPU-heavy
         decode inside the sounddevice callback would glitch the stream)."""
         while not self._stop.is_set():
             try:
@@ -1237,20 +1428,9 @@ class MicSession:
             sustained = self._speech_seconds
             self._speech_seconds = 0.0
             audio = self._take_clip()
-            if text and sustained < self._min_speech:
-                # A noise blip (typing, slam, cough) ended the utterance - only
-                # dispatched on sustained speech, so it must not act on Ra.
+            if text and not _is_valid_speech(text, audio, sustained, self._min_speech):
                 ralog.log("voice", f"ignoring noise phrase '{text}' "
                                    f"({sustained:.2f}s speech).")
-                return
-            # Whole-utterance backstop: even when individual blocks were loud
-            # / modulated enough to slip through the per-block band gate, a
-            # mixed clip (fan + faint speech) may still be too flat overall -
-            # drop it rather than dispatch a likely hallucination. A LOUD clip
-            # (hold out a shout) is always human and passes unconditionally.
-            if text and audio is not None and not _is_human_audio(audio):
-                ralog.log("voice", f"ignoring flat-utterance '{text}' "
-                                   f"(modulation too low).")
                 return
             if text:
                 # Smooth: dispatch on a dedicated thread (instant, callback-free).
@@ -1289,6 +1469,238 @@ class MicSession:
             # "speech" - only genuinely sustained speech passes the gate.
             self._speech_seconds = max(0.0, self._speech_seconds - sec * 2)
         self._feed(block.tobytes())  # never drop audio - Vosk handles silence
+
+
+# ---------------------------------------------------------------------------
+# sherpa-onnx streaming (default STT - fast-conformer en-480ms int8)
+# ---------------------------------------------------------------------------
+class _SherpaStream:
+    """Continuous streaming STT session powered by sherpa-onnx. Live partials
+    come from the streaming fast-conformer transducer; sherpa's own endpoint
+    rules detect phrase boundaries (sustained-speech + _is_human_audio
+    backstops kept). Mirrors MicSession's architecture: EVERY gated block is
+    fed to the streaming recognizer. The final text is refined in the
+    background by the offline parakeet recognizer (STT_FINAL_ENGINE=parakeet)
+    or, optionally, by Groq Whisper / faster-whisper (STT_FINAL_ENGINE=groq/
+    whisper)."""
+
+    def __init__(self, on_phrase, on_partial=None, busy_check=None, on_correct=None):
+        self.on_phrase = on_phrase
+        self.on_partial = on_partial or (lambda text: None)
+        self.busy_check = busy_check or (lambda: False)
+        self.on_correct = on_correct or (lambda original, corrected: None)
+        self.error = None
+        self._thread = None
+        self._stop = threading.Event()
+        self._src = None
+        self._backend = None
+        self._last_partial = ""
+        self._clip = []
+        self._clip_lock = threading.RLock()
+        self._clip_samples = 0
+        self._noise = float(getattr(config, "STT_ENERGY_THRESHOLD", 300)) / 32768.0
+        self._speech_seconds = 0.0
+        self._in_speech = False
+        self._silence_since = None
+        self._min_speech = float(getattr(config, "STT_MIN_SPEECH_SECONDS", 0.4))
+
+    def start(self):
+        self._recognizer = _get_sherpa()
+        self._stream = self._recognizer.create_stream()
+        self._src, self._backend = _open_capture_source()
+        self._dispatch_q: queue.Queue = queue.Queue()
+        self._dispatch_thread = threading.Thread(
+            target=self._dispatch_worker, daemon=True, name="ra-dispatch")
+        self._dispatch_thread.start()
+        self._fin_q: queue.Queue = queue.Queue()
+        self._fin_thread = threading.Thread(
+            target=self._finalize_worker, daemon=True, name="ra-finalize")
+        self._fin_thread.start()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="ra-mic")
+        self._thread.start()
+        ralog.log("voice", f"microphone streaming started "
+                           f"({self._backend}, sherpa-onnx, adaptive gate).")
+        return self
+
+    def stop(self):
+        self._stop.set()
+        if self._src is not None:
+            self._src.close()
+
+    def _dispatch_worker(self):
+        while not self._stop.is_set():
+            try:
+                text = self._dispatch_q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if text:
+                self.on_phrase(text)
+
+    def _run(self):
+        try:
+            while not self._stop.is_set():
+                block = self._src.next_block(timeout=0.2)
+                if block is None:
+                    continue
+                self._process_block(block)
+        except Exception as e:
+            self.error = e
+            ralog.log("err", f"sherpa microphone failed: {e}")
+
+    def _clip_block(self, block):
+        with self._clip_lock:
+            self._clip.append(block.copy())
+            self._clip_samples += block.shape[0]
+            max_samples = int(_SAMPLE_RATE * getattr(
+                config, "STT_UTTERANCE_BUFFER_SECONDS", 30))
+            while self._clip_samples > max_samples and self._clip:
+                dropped = self._clip.pop(0)
+                self._clip_samples -= dropped.shape[0]
+
+    def _take_clip(self):
+        with self._clip_lock:
+            if not self._clip:
+                return None
+            audio = np.concatenate(self._clip, axis=0).astype(np.float32) \
+                .flatten() / 32768.0
+            self._clip = []
+            self._clip_samples = 0
+            return audio if audio.shape[0] >= _SAMPLE_RATE * 0.2 else None
+
+    def _process_block(self, block):
+        """A 0.2s mono int16 block arrived from the capture backend.
+
+        Phrase boundaries are driven by Ra's OWN adaptive gate (adaptive noise
+        floor + band classifier + trailing-silence), mirroring the proven
+        `_WhisperVADStream` - NOT by sherpa's `is_endpoint()` rules (sherpa's
+        1.2-2.4s trailing-silence endpoint never fires on a noisy room floor,
+        which is exactly why continuous mode went silent while PTT is perfect).
+        Sherpa is still fed EVERY block so live partials flow; `_end_phrase`
+        resets its stream when Ra decides a phrase is done."""
+        if self._stop.is_set():
+            return
+        level = float(np.abs(block).mean()) / 32768.0
+        sec = block.shape[0] / _SAMPLE_RATE
+        self._noise = _track_noise_floor(self._noise, level)
+        talking = _classify_speech(level, block, self._noise)
+        _stt_debug("vol=%s lvl=%.4f cv=%.3f floor=%.4f -> %s" % (
+            "S" if talking else "-", level,
+            _energy_cv(block) if level >= config.STT_MIN_SIGNAL_LEVEL else 0.0,
+            self._noise, "SPEECH" if talking else "noise"))
+        finalize = False
+        with self._clip_lock:
+            if talking and not self._in_speech:
+                self._in_speech = True
+                self._speech_seconds = 0.0
+                self._silence_since = None
+                self._clip = [block.copy()]
+            elif self._in_speech:
+                self._clip_block(block)
+                if talking:
+                    self._speech_seconds += sec
+                    self._silence_since = None
+                else:
+                    self._speech_seconds = max(
+                        0.0, self._speech_seconds - sec * 2)
+                    if self._silence_since is None:
+                        self._silence_since = time.time()
+                    else:
+                        pause = float(getattr(
+                            config, "STT_PAUSE_THRESHOLD", 0.8))
+                        if time.time() - self._silence_since >= pause:
+                            finalize = True
+                            self._in_speech = False
+                            self._silence_since = None
+        if finalize:
+            self._end_phrase()
+        # Feed the float32 samples ([-1, 1]) to sherpa - never drop audio.
+        samples = (block.astype(np.float32) / 32768.0).flatten()
+        self._stream.accept_waveform(_SAMPLE_RATE, samples)
+        while self._recognizer.is_ready(self._stream):
+            self._recognizer.decode_stream(self._stream)
+        partial = (self._recognizer.get_result(self._stream) or "").strip()
+        if partial and partial != self._last_partial:
+            self._last_partial = partial
+            self.on_partial(partial)
+
+    def _end_phrase(self):
+        text = (self._recognizer.get_result(self._stream) or "").strip()
+        self._recognizer.reset(self._stream)
+        self._last_partial = ""
+        sustained = self._speech_seconds
+        self._speech_seconds = 0.0
+        audio = self._take_clip()
+        if text and not _is_valid_speech(text, audio, sustained, self._min_speech):
+            ralog.log("voice", f"ignoring noise phrase '{text}' "
+                               f"({sustained:.2f}s speech).")
+            return
+        if text:
+            self._dispatch_q.put(text)
+            fin = getattr(config, "STT_FINAL_ENGINE", "parakeet").lower()
+            if audio is not None and fin in ("parakeet", "groq", "whisper") \
+                    and not self.busy_check():
+                self._fin_q.put((text, audio))
+
+    def _finalize_worker(self):
+        fin = getattr(config, "STT_FINAL_ENGINE", "parakeet").lower()
+        while not self._stop.is_set():
+            try:
+                text, audio = self._fin_q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                if fin == "groq":
+                    wtext = _groq_transcribe(audio)
+                elif fin == "parakeet":
+                    wtext = _transcribe_sherpa_offline(audio)
+                else:
+                    wtext = _whisper_transcribe(audio)
+                if wtext and wtext.lower().strip() != text.lower().strip():
+                    ralog.log("voice", f"sherpa: '{text}' -> final: '{wtext}'")
+                    self.on_correct(text, wtext)
+            except Exception as e:
+                ralog.log("warn", f"finalize failed ({e}); keeping sherpa text")
+
+
+def _whisper_transcribe(audio) -> str:
+    """faster-whisper batch transcription of a float32 clip."""
+    model = _get_whisper_model()
+    segments, _info = model.transcribe(
+        audio, language="en", beam_size=1, vad_filter=True)
+    return " ".join(seg.text for seg in segments).strip()
+
+
+def _groq_transcribe(audio) -> str:
+    """Optional cloud FINAL pass via Groq Whisper (whisper-large-v3-turbo).
+    Requires RA_GROQ_API_KEY. Converts the clip to an in-memory WAV and POSTs
+    it to the Groq audio endpoint."""
+    import io
+    import wave
+    import json
+
+    api_key = os.environ.get("RA_GROQ_API_KEY") or os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        ralog.log("warn", "STT_FINAL_ENGINE=groq but no RA_GROQ_API_KEY set.")
+        return ""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(_CHANNELS)
+        wf.setsampwidth(2)
+        wf.setframerate(_SAMPLE_RATE)
+        wf.writeframes((audio * 32768).astype(np.int16).tobytes())
+    buf.seek(0)
+    import requests
+    r = requests.post(
+        getattr(config, "GROQ_WHISPER_URL", "https://api.groq.com/openai/v1/"
+                "audio/transcriptions"),
+        headers={"Authorization": "Bearer " + api_key},
+        files={"file": ("clip.wav", buf.getvalue(),
+                        "audio/wav")},
+        data={"model": getattr(config, "GROQ_WHISPER_MODEL",
+                               "whisper-large-v3-turbo")},
+        timeout=60)
+    r.raise_for_status()
+    return (json.loads(r.text) or {}).get("text", "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -1448,36 +1860,50 @@ class _WhisperVADStream:
                 ralog.log("warn", f"whisper-VAD transcribe failed ({e})")
 
 
-def start_mic(on_phrase, on_partial=None, busy_check=None, on_correct=None) -> MicSession:
+def start_mic(on_phrase, on_partial=None, busy_check=None, on_correct=None):
     """Start ALWAYS-ON streaming listening. Returned object exposes `.error` if
-    the mic is unavailable. Prefers the vosk streaming path (instant partials +
-    whisper finalize); if vosk is missing, misbehaving, or STT_ENGINE=whisper,
-    it automatically falls back to the whisper+VAD streamer - in every case the
-    mic stays on continuously: no push-to-talk required."""
+    the mic is unavailable. Prefers the vosk streaming path (the proven
+    always-on engine); sherpa-onnx streaming and the whisper+VAD streamer are
+    selectable via STT_CONTINUOUS_ENGINE. In every case the mic stays on
+    continuously: no push-to-talk required. PTT still uses STT_ENGINE
+    (default sherpa-onnx), so the two modes are independently configurable."""
     global _mic
     with _mic_lock:
         if _mic and _mic.error is None:
             return _mic
+        # ALWAYS-ON listening uses its own engine choice (default vosk - the
+        # proven always-on streaming path), independent of PTT's STT_ENGINE.
+        engine = getattr(config, "STT_CONTINUOUS_ENGINE", "vosk").lower()
         try:
-            if config.STT_ENGINE == "whisper":
+            if engine == "whisper":
                 _mic = _WhisperVADStream(on_phrase, on_partial,
                                          busy_check=busy_check,
                                          on_correct=on_correct).start()
+            elif engine == "sherpa-onnx":
+                _mic = _SherpaStream(on_phrase, on_partial, busy_check=busy_check,
+                                     on_correct=on_correct).start()
             else:
                 _mic = MicSession(on_phrase, on_partial, busy_check=busy_check,
                                   on_correct=on_correct).start()
         except Exception as e:
-            ralog.log("warn", f"vosk streaming unavailable ({e}) - "
-                              f"falling back to whisper-VAD always-on.")
+            ralog.log("warn", f"{engine} streaming unavailable ({e}) - "
+                              f"falling back to vosk streaming.")
             try:
-                _mic = _WhisperVADStream(on_phrase, on_partial,
-                                         busy_check=busy_check,
-                                         on_correct=on_correct).start()
+                _mic = MicSession(on_phrase, on_partial, busy_check=busy_check,
+                                  on_correct=on_correct).start()
             except Exception as e2:
-                ralog.log("err", f"voice unavailable ({e2}) - "
-                                 f"push-to-talk uses Whisper")
-                _mic = MicSession(on_phrase, on_partial)
-                _mic.error = e2 if not getattr(_mic, "error", None) else _mic.error
+                ralog.log("warn", f"vosk streaming unavailable ({e2}) - "
+                                  f"falling back to whisper-VAD always-on.")
+                try:
+                    _mic = _WhisperVADStream(on_phrase, on_partial,
+                                             busy_check=busy_check,
+                                             on_correct=on_correct).start()
+                except Exception as e3:
+                    ralog.log("err", f"voice unavailable ({e3}) - "
+                                     f"push-to-talk uses Whisper")
+                    _mic = MicSession(on_phrase, on_partial)
+                    _mic.error = e2 if not getattr(
+                        _mic, "error", None) else _mic.error
         return _mic
 
 
@@ -1534,6 +1960,48 @@ def _transcribe_vosk(audio) -> str:
     return text
 
 
+def _transcribe_sherpa(audio) -> str:
+    """Batch transcription of one captured clip via sherpa-onnx (used by
+    push-to-talk when STT_ENGINE=sherpa-onnx). Feeds the whole utterance to a
+    fresh stream, adds tail padding, and returns the decoded text. When
+    STT_FINAL_ENGINE=parakeet the streaming result is refined by the offline
+    parakeet recognizer for maximum accuracy."""
+    recognizer = _get_sherpa()
+    stream = recognizer.create_stream()
+    stream.accept_waveform(_SAMPLE_RATE, audio.astype(np.float32))
+    tail = np.zeros(int(_SAMPLE_RATE * 0.8), dtype=np.float32)
+    stream.accept_waveform(_SAMPLE_RATE, tail)
+    stream.input_finished()
+    while recognizer.is_ready(stream):
+        recognizer.decode_stream(stream)
+    text = (recognizer.get_result(stream) or "").strip()
+    recognizer.reset(stream)
+    fin = getattr(config, "STT_FINAL_ENGINE", "parakeet").lower()
+    if fin == "parakeet" and text:
+        refined = _transcribe_sherpa_offline(audio)
+        if refined and refined.lower().strip() != text.lower().strip():
+            ralog.log("voice", f"sherpa: '{text}' -> parakeet final: '{refined}'")
+            return refined
+    return text
+
+
+def _transcribe_sherpa_offline(audio) -> str:
+    """Offline (non-streaming) transcription of one clip via the offline
+    parakeet recognizer - the higher-accuracy FINAL pass of the hybrid STT.
+    Returns "" if the clip is too short to decode."""
+    if audio is None or audio.shape[0] < _SAMPLE_RATE * 0.2:
+        return ""
+    recognizer = _get_sherpa_offline()
+    samples = audio.astype(np.float32)
+    tail = np.zeros(int(_SAMPLE_RATE * 0.8), dtype=np.float32)
+    samples_aug = np.concatenate([samples, tail])
+    stream = recognizer.create_stream()
+    stream.accept_waveform(_SAMPLE_RATE, samples_aug)
+    recognizer.decode_stream(stream)
+    text = (stream.result.text or "").strip()
+    return text
+
+
 def listen_once(timeout: int = 8, phrase_time_limit: int = 10) -> str:
     """Push-to-talk: listen once and return the recognized phrase."""
     ralog.log("voice", "listening...")
@@ -1541,13 +2009,29 @@ def listen_once(timeout: int = 8, phrase_time_limit: int = 10) -> str:
     if audio is None:
         ralog.log("voice", "nothing heard.")
         return ""
-    # Push-to-talk favors accuracy: whisper first (same model the streaming
-    # path uses to finalize), falling back to vosk if whisper is unavailable.
+    # Push-to-talk favors accuracy: the configured STT engine first, then a
+    # final cloud pass only when STT_FINAL_ENGINE=groq/whisper. Falls back
+    # down the chain (sherpa -> whisper -> vosk) if an engine is unavailable.
+    engine = getattr(config, "STT_ENGINE", "sherpa-onnx").lower()
+    if engine == "whisper":
+        try:
+            text = _whisper_transcribe(audio)
+            if text:
+                ralog.log("voice", f"heard: {text}")
+                return text
+        except Exception as e:
+            ralog.log("warn", f"whisper transcription failed ({e}); using sherpa")
+    else:
+        try:
+            text = _transcribe_sherpa(audio) if engine == "sherpa-onnx" \
+                else _transcribe_vosk(audio)
+            if text:
+                ralog.log("voice", f"heard: {text}")
+                return text
+        except Exception as e:
+            ralog.log("warn", f"{engine} transcription failed ({e}); using whisper")
     try:
-        model = _get_whisper_model()
-        segments, _info = model.transcribe(audio, language="en", beam_size=1,
-                                           vad_filter=True)
-        text = " ".join(seg.text for seg in segments).strip()
+        text = _whisper_transcribe(audio)
         if text:
             ralog.log("voice", f"heard: {text}")
             return text

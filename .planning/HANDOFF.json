@@ -1,55 +1,54 @@
 {
   "version": "1.0",
-  "timestamp": "2026-09-16T19:47:14Z",
+  "timestamp": "2026-09-18T21:10:00Z",
   "phase": null,
-  "phase_name": null,
+  "phase_name": "Ra STT engine swap (sherpa-onnx hybrid) + continuous-hearing bug",
   "phase_dir": null,
   "plan": null,
-  "task": null,
-  "total_tasks": null,
-  "status": "paused",
-  "context": "STT-engine swap (sherpa-onnx + Groq Whisper) then omi replication into Ra as additive V2",
+  "task": 9,
+  "total_tasks": 12,
+  "status": "engine_switched_pending_byear",
+  "context": "User by-ear GATE FAILED on sherpa-continuous (21:40 build): STILL hears nothing in continuous mode. Diagnosis: ~/.ra/ra_stt_debug.log at 21:48:47 SHOWS user WAS heard (lvl=0.1112 LOUD -> SPEECH, gate works, new floor= format = new code in exe) but NO phrase fired - sherpa streaming recognizer returns EMPTY text on this rig even for loud real speech. PTT is perfect because it uses the batch path (_transcribe_sherpa with input_finished). DECISION per user mandate ('change the tool for that part'): continuous ALWAYS-ON engine switched to VOSK (MicSession - the proven pre-HUD continuous engine; vosk model present at ~/.ra/models), while PTT stays on sherpa. NEW config STT_CONTINUOUS_ENGINE (env RA_STT_CONTINUOUS_ENGINE, default vosk), read only by start_mic; dispatcher 'else' branch now routes vosk -> MicSession.",
   "completed_tasks": [
-    {"id": 1, "name": "Root-cause mic silence on built exe (device selection, not thresholds); picker fixed + sd[1] live verified", "status": "done", "notes": "debug log archived to Temp\\opencode\\ra_stt_debug_run1.log; exe REBUILT at hud\\dist\\Ra.exe (00:47) but user reports it still hears wrong/annoyingly"},
-    {"id": 2, "name": "STT engine research: sherpa-onnx 1.13.8 chosen (parakeet-tdt-0.6b-v2-int8, cc-by-4.0, streaming transducer, feature_dim 80, 16kHz) + Groq Whisper optional cloud final", "status": "done", "notes": "API confirmed via introspection"},
-    {"id": 3, "name": "Install sherpa-onnx into dev interpreter (pythoncore-3.14-64) - SUCCESS 1.13.8 + sherpa-onnx-core", "status": "done", "notes": "not yet installed into Store 3.13 build interpreter"},
-    {"id": 4, "name": "Download parakeet model to ~/.ra/models", "status": "in_progress", "progress": "download ABORTED by user; partial file sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2 ~79MB (needs ~750MB) - DELETE and re-download"},
-    {"id": 5, "name": "Clone omi repo for reuse study", "status": "done", "progress": "blobless+sparse clone at Temp\\opencode\\omi; sparse dirs: app backend mcp web desktop plugins sdks config contracts"},
-    {"id": 6, "name": "Omi capability inventory + mapping to Ra (add/replace/keep)", "status": "not_started", "notes": "trees listed; deep file reads not yet done"},
-    {"id": 10, "name": "REPO SPLIT: Ra frozen as pre-omi baseline; Ra-omi worktree created", "status": "done", "notes": "this repo committed at feff3ce (STT/device fixes); Ra-omi at C:\\Users\\mdahm\\OneDrive\\Documents\\Ra-omi with own git (baseline 91d6eab + INIT.md e71b8e9); all omi work goes there"},
-    {"id": 7, "name": "Implement STT engine layer in config.py + audio_io.py (sherpa default, vosk fallback, groq final)", "status": "not_started", "notes": "design decided: _SherpaStream modeled on MicSession, gate preserved, models next to exe for build"},
-    {"id": 8, "name": "Tests (pytest on Store 3.13) + live capture verify + bundle sherpa into spec + rebuild exe + user by-ear verify", "status": "not_started"},
-    {"id": 9, "name": "Omi V2 architecture + pillars B1 memory / B2 apps / B3 personas / B4 mcp / B6 HUD + tests/rebuild/verify", "status": "not_started"}
+    {"id": 1, "name": "Root-cause + fix mic device auto-pick (old exe)", "status": "done", "commit": "feff3ce"},
+    {"id": 2, "name": "STT research: sherpa-onnx hybrid (online fast-conformer partials + offline parakeet final)", "status": "done"},
+    {"id": 3, "name": "Install sherpa-onnx 1.13.8 on dev (pythoncore-3.14-64) + Store 3.13", "status": "done"},
+    {"id": 4, "name": "Download + extract BOTH sherpa model bundles to ~/.ra/models", "status": "done"},
+    {"id": 5, "name": "Clone omi (blobless+sparse) + Ra-omi worktree baseline", "status": "done"},
+    {"id": 6, "name": "Implement STT engine layer (config.py, audio_io.py, assistant.py, ra.spec)", "status": "done", "notes": "UNCOMMITTED by user choice"},
+    {"id": 7, "name": "Tests on Store 3.13", "status": "done", "notes": "224 passed 2026-09-18 00:10"},
+    {"id": 8, "name": "Rebuild Ra.exe with sherpa", "status": "done", "notes": "hud/dist/Ra.exe 17-09 22:06, 339.2MB, sherpa_onnx bundled"},
+    {"id": 9, "name": "FIX continuous always-on hearing in new exe (PTT already perfect)", "status": "done", "progress": "Round 1 (sherpa-side fix) FAILED user by-ear: gate fix applied (_process_block -> adaptive _track_noise_floor + _classify_speech + trailing-quiet STT_PAUSE_THRESHOLD -> _end_phrase; wake extended on partials; RA_STT_DEBUG=1 live in both .env files; 224 tests green; exe rebuilt 339.3MB). User: 'it did not change'. Evidence in ~/.ra/ra_stt_debug.log 21:48:47: user WAS heard (lvl=0.1112 LOUD -> SPEECH) but NO phrase fired -> sherpa STREAMING recognizer returns EMPTY text for real loud speech on this rig (partials=0 in all smoke runs). PTT is perfect because it uses the batch path (_transcribe_sherpa + input_finished). Round 2 (APPLIED): switch the ALWAYS-ON engine to VOSK (MicSession - the proven pre-HUD continuous engine; vosk model already at ~/.ra/models/vosk-model-small-en-us-0.15). config.py: +STT_CONTINUOUS_ENGINE (RA_STT_CONTINUOUS_ENGINE, default vosk). audio_io.start_mic: reads STT_CONTINUOUS_ENGINE (not STT_ENGINE), dispatcher 'else' branch now routes vosk -> MicSession (was silently routing to _SherpaStream). PTT untouched (still STT_ENGINE=sherpa-onnx batch). 224 tests pass (multibrain flaky: test_dead_brain_is_not_retried_on_the_next_turn fails on clean HEAD too). Exe REBUILT 18-09 22:05, 355.7MB, vosk/webview/sherpa_onnx/onnxruntime/pythonnet confirmed in archive; launch smoke OK (alive 10s). AWAITING USER BY-EAR GATE round 2."}
   ],
   "remaining_tasks": [
-    {"id": 4, "name": "Re-download parakeet model (~750MB) to ~/.ra/models", "status": "blocked", "notes": "user aborted first attempt"},
-    {"id": 6, "name": "Omi capability inventory + mapping", "status": "not_started"},
-    {"id": 7, "name": "Implement STT engine layer (config + audio_io)", "status": "not_started"},
-    {"id": 8, "name": "Tests + live verify + bundle + rebuild exe + by-ear verify", "status": "not_started"},
-    {"id": 9, "name": "Omi pillars B1-B6 + HUD + verify", "status": "not_started"}
+    {"id": 10, "name": "User by-ear final verification (normal speech, wake, no-wake follow-up, fan ignored, scream heard, PTT)", "status": "pending", "notes": "THE acceptance gate - never claim fixed without it"},
+    {"id": 11, "name": "Sync verified sherpa fix into Ra-omi worktree (Ra fix, not omi)", "status": "pending"},
+    {"id": 12, "name": "Track B omi pillars B1 memory / B2 apps / B3 personas / B4 mcp / B6 HUD (in Ra-omi only)", "status": "pending"}
   ],
   "blockers": [
-    {"description": "Built Ra.exe STILL hears wrong after device fix: debug log shows sd[1] picked but stream blocks were digital silence (lvl=0.0000) during the run - capture-stability issue unresolved on the frozen exe", "type": "technical", "workaround": "re-examine ra_stt_debug_run1.log; re-verify after sherpa rebuild; reproduce live in dev (pythoncore 3.14) not Store python"},
-    {"description": "Parakeet model download incomplete (~79MB partial vs ~750MB full)", "type": "external", "workaround": "delete partial file, re-download with long timeout; network attention needed"},
-    {"description": "Task/subagent tool failing (NOT NULL constraint failed: session_message.seq) - happened 2x", "type": "technical", "workaround": "do research inline in main context (worked: clone+read+grep); retry subagents only if transient"}
+    {"description": "Continuous mode hears NOTHING in new exe while PTT is perfect. Round 1 gate fix FAILED. Evidence (ra_stt_debug.log 21:48:47): gate works + user was heard (lvl=0.1112 LOUD -> SPEECH; floor= format proves new code in exe) but NO phrase fired -> sherpa STREAMING recognizer returns EMPTY text on this rig for real speech (partials=0 in every smoke run); PTT works via _transcribe_sherpa batch + input_finished. Round 2 fix (APPLIED): continuous ALWAYS-ON engine switched to VOSK (MicSession, proven pre-HUD engine), PTT unchanged on sherpa batch. If by-ear STILL silent, evidence: ra_stt_debug.log should lack SPEECH lines from vosk; check ralog 'heard:' and vosk phrases.", "type": "technical", "workaround": "Round 1: gate-driven endpoint (APPLIED, insufficient). Round 2 (APPLIED): STT_CONTINUOUS_ENGINE=vosk for always-on listening; PTT keeps sherpa."},
+    {"description": "RA_STT_DEBUG set in NO env file (project .env and ~/.ra/.env lack all RA_STT_* keys); new exe logged zero lines (log last written 18:53 in OLD floor= format)", "type": "technical", "workaround": "Set RA_STT_DEBUG=1 in ~/.ra/.env AND project .env before any diagnostic run"},
+    {"description": "Wake word detection only on final phrases (assistant._on_phrase L419); _on_partial L432 only posts UI text", "type": "technical", "workaround": "Add wake-word match on partial text in _on_phrase trigger path"},
+    {"description": "Subagent/task tooling broken last session (session_message.seq NOT NULL) - unverified this session", "type": "technical", "workaround": "Work inline; retry subagents only if transient"}
   ],
   "human_actions_pending": [
-    {"action": "Allow ~750MB parakeet model download (was aborted)", "context": "required for sherpa STT engine dev + bundling", "blocking": true},
-    {"action": "By-ear verification of final exe (normal speech heard, screams heard, fan ignored, both modes)", "context": "user is the acceptance gate; do NOT claim fixed without it", "blocking": true},
-    {"action": "Decide omi apps port strategy: omi chat-tools are Node (plugins/omi-*-app); port pattern into Ra's Python plugin system vs bridge", "context": "design-time decision for pillar B2", "blocking": false}
+    {"action": "By-ear verify after the continuous-hearing fix (normal speech heard, wake works, no-wake follow-up, fan ignored, scream heard, PTT untouched)", "context": "User is the acceptance gate; explicit mandate: fix + understand + make perfect BEFORE THIS WEEK ENDS", "blocking": true},
+    {"action": "Approve commit of Track A work AFTER continuous-hearing fix verified (user explicitly left it uncommitted this pause)", "context": "128 KB+ of uncommitted sherpa engine work in working tree", "blocking": false},
+    {"action": "Decide omi apps port strategy (Node chat-tools -> Python) at pillar B2 design time, in Ra-omi", "context": "design-time decision for Track B", "blocking": false}
   ],
   "decisions": [
-    {"decision": "sherpa-onnx becomes new default local STT (STT_ENGINE=sherpa-onnx default), vosk stays as explicit fallback, Groq Whisper (whisper-large-v3-turbo via RA_GROQ_API_KEY) becomes optional cloud final (STT_FINAL_ENGINE=groq); local whisper final still an option", "rationale": "user directive: best free local as default, deepgram-alternative optional; parakeet int8 far more accurate than vosk-small + has punctuation/caps", "phase": null},
-    {"decision": "Keep Ra's noise classifier / gate (fan-proof, scream-proof) untouched; sherpa consumes the same gated pipeline as vosk did - phrase boundary via sherpa endpoint rules, keep sustained-speech + _is_human_audio backstops", "rationale": "do not mess up what works (cooler rejection, scream acceptance)", "phase": null},
-    {"decision": "Model placement: dev uses ~/.ra/models; release bundles model NEXT TO exe (hud/dist/models/...) rather than inside Ra.exe (keeps 345MB exe from ballooning to ~1.1GB)", "rationale": "PyInstaller onefile size/launch cost", "phase": null},
-    {"decision": "Omi = additive V2 layer in Ra (src/ra/omi/), replace only where omi is strictly better; pillars B1 memory, B2 apps/chat-tools, B3 personas, B4 mcp (omi mcp/ has own SDK), B6 HUD", "rationale": "user: keep Ra as it is, add as new version", "phase": null},
-    {"decision": "REPO SPLIT: this Ra folder stays the frozen PRE-OMI baseline (voice continuous-convo fix + STT/device work, commit feff3ce). Omi integration is built in a SEPARATE folder C:\\Users\\mdahm\\OneDrive\\Documents\\Ra-omi (own git repo, baseline 91d6eab, INIT.md). STT engine swap continues HERE as Ra's own fix, then sync into Ra-omi; no omi code ever touches the Ra baseline", "rationale": "user: 'let everything here be as it was before omi, start omi in another folder containing Ra at the voice-continuous-convo-fixed state'", "phase": null},
-    {"decision": "Exe rebuild requires: kill Ra processes first; build_exe.bat copies project .env -> ~/.ra/.env (so RA_STT_DEBUG etc survive)", "rationale": "learned earlier: locked-exe errors, env propagation", "phase": null}
+    {"decision": "sherpa-onnx default STT: ONLINE fast-conformer streams live partials; OFFLINE parakeet (nemo_transducer, feature_dim 128) refines finals in a background worker via on_correct; STT_FINAL_ENGINE=parakeet default (sherpa/whisper/groq/off options)", "rationale": "user directive: best free local default; parakeet has punctuation/caps; instant responses preserved via on_correct upgrade path", "phase": null},
+    {"decision": "Wake words widened to 'fire up, ra, hey ra, rah, raw, ray, rad, rock'; gate knobs loosened (min speech 0.15, modulation 0.05, noise ratio 1.0)", "rationale": "catch softer speech; cancel any knob that lets fan through during acceptance", "phase": null},
+    {"decision": "Phrase boundary in continuous mode MUST be gate-driven (Ra's own _classify_speech + trailing quiet), NOT sherpa endpoint alone; wake must be detected on partials too", "rationale": "failure evidence: endpoint rules never fire on this rig; wake only-on-final-phrase means no endpoint = no wake", "phase": null},
+    {"decision": "ALWAYS-ON listening engine = VOSK (STT_CONTINUOUS_ENGINE default vosk), independent of PTT: sherpa STREAMING proved empty-text on this rig for real speech even after gate fix; vosk MicSession is the proven pre-HUD continuous engine; PTT keeps sherpa batch which is perfect", "rationale": "user mandate: 'change the tool you use for that particular part... rewrite that specific part completely if needed'; sherpa streaming get_result() returned '' for LOUD speech (lvl=0.1112) at 21:48:47", "phase": null},
+    {"decision": "Repo split stays: this Ra folder = pre-omi baseline (no omi code); sherpa swap is Ra's fix, synced to Ra-omi AFTER by-ear verification; omi pillars only in Ra-omi worktree", "rationale": "user: keep Ra as-is, add as new version in separate folder", "phase": null},
+    {"decision": "No WIP commit this pause (user chose to leave working tree uncommitted)", "rationale": "explicit user instruction", "phase": null},
+    {"decision": "Exe rebuild rules: kill Ra first; build_exe.bat copies project .env -> ~/.ra/.env (RA_STT_DEBUG etc must be set in BOTH)", "rationale": "env propagation learned earlier", "phase": null}
   ],
   "uncommitted_files": [
-    ".planning/HANDOFF.json + .planning/.continue-here.md (WIP handoff update for repo split)",
-    "WORKING TREE IS COMMITTED: baseline fixes land in feff3ce; rest clean"
+    "src/ra/audio_io.py (+600) src/ra/config.py (+60) src/ra/assistant.py (+30) hud/ra.spec (+10) tests/test_voice_pipeline.py (+111) README.md .env.example tests/test_branding.py",
+    "untracked: hud/build_log.txt (sherpa build evidence), mic_diag_out.txt (stale failed-run artifact, can delete)"
   ],
-  "next_action": "Delete partial ~/.ra/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2, re-download full (~750MB), then add sherpa/Groq constants to config.py and implement _SherpaStream + dispatch + listen_once in audio_io.py; run pytest; install sherpa-onnx into Store 3.13; rebuild exe; user verifies by ear",
-  "context_notes": "Two-track work: (A) finish STT engine swap so user hears correctly, (B) then replicate omi. Subagent infra broken - research inline. Omi clone is blobless+sparse; do not add docs/ to sparse set (timed out). sherpa endpoint rules are INLINE in OnlineRecognizer.from_transducer (no EndpointConfig class). Dev interpreter = pythoncore-3.14-64 (mic-capable, now has sherpa-onnx 1.13.8); build/test = Store 3.13 (AppContainer, mic-blocked, needs sherpa-onnx pip install before rebuild)."
+  "next_action": "USER BY-EAR GATE round 2: run hud\\dist\\Ra.exe (fresh build 18-09 22:05, 355.7MB). Continuous ALWAYS-ON now uses VOSK (proven pre-HUD engine, same MicSession path that worked in ra-before-hud / earlier rahud); PTT still sherpa (untouched). RA_STT_DEBUG=1 live in BOTH .env files. Checklist: normal speech heard, wake works, no-wake follow-up works, fan ignored, scream heard, PTT untouched. AFTER by-ear pass: commit (user authorized post-fix), sync to Ra-omi, then Track B.",
+  "context_notes": "Round 1 (sherpa gate fix) FAILED user by-ear; sherpa STREAMING proved empty-text on this rig even for LOUD speech (lvl=0.1112 SPEECH at 21:48:47, no phrase). Round 2 applied: always-on engine = vosk MicSession (STT_CONTINUOUS_ENGINE), PTT = sherpa batch. 224 tests green except flaky multibrain (fails on clean HEAD). Working tree deliberately dirty. No servers running."
 }

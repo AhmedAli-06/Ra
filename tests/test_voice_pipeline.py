@@ -205,3 +205,127 @@ def test_processor_speaks_sentences_in_order_and_opens_conversation(monkeypatch)
     assert assistant._conversation_active()
     assistant.stop_event.set()
     time.sleep(0.3)  # let daemon threads observe the stop flag
+
+
+# ---------------------------------------------------------------------------
+# sherpa-onnx streaming path
+# ---------------------------------------------------------------------------
+class _FakeStream:
+    def __init__(self):
+        self.audio = []
+
+    def accept_waveform(self, sr, samples):
+        self.audio.append(samples)
+
+
+class _FakeRecognizer:
+    """Stands in for sherpa_onnx.OnlineRecognizer: records accepted audio,
+    returns configured partials/finals and an endpoint flag, and counts resets."""
+
+    def __init__(self, partial="", final="hi there", endpoint=False):
+        self.partial = partial
+        self.final = final
+        self.endpoint = endpoint
+        self.stream = _FakeStream()
+        self.reset_calls = 0
+        self.decode_calls = 0
+
+    def create_stream(self):
+        return self.stream
+
+    def is_ready(self, stream):
+        return self.decode_calls == 0
+
+    def decode_stream(self, stream):
+        self.decode_calls += 1
+
+    def get_result(self, stream):
+        return self.final
+
+    def is_endpoint(self, stream):
+        return self.endpoint
+
+    def reset(self, stream):
+        self.reset_calls += 1
+
+
+def _speech_block(v=0.3):
+    """One loud, modulated 0.2s speech-like int16 block (energy well above the
+    weak-signal floor and obviously 'talking' on the band gate)."""
+    import numpy as np
+    n = int(audio_io._SAMPLE_RATE * 0.2)
+    t = np.arange(n) / audio_io._SAMPLE_RATE
+    tone = (v * 32767.0 * (0.6 * np.sin(2 * np.pi * 220.0 * t)
+            + 0.3 * np.sin(2 * np.pi * 440.0 * t))).astype(np.int16)
+    return tone
+
+
+def _silence_block():
+    """One 0.2s all-zero int16 block — digital dead air (never 'talking')."""
+    import numpy as np
+    return np.zeros(int(audio_io._SAMPLE_RATE * 0.2), dtype=np.int16)
+
+
+def test_sherpa_stream_dispatches_partial_and_phrase(monkeypatch):
+    """_SherpaStream must stream live partials from the recognizer, dispatch
+    the final when RA's OWN gate (trailing silence) closes the utterance, and
+    reset for the next one - even when sherpa is_endpoint() NEVER fires (the
+    exact regression that killed continuous hearing)."""
+    monkeypatch.setattr(audio_io.config, "STT_MIN_SPEECH_SECONDS", 0.0)
+    monkeypatch.setattr(audio_io.config, "STT_FINAL_ENGINE", "sherpa")
+    monkeypatch.setattr(audio_io.config, "STT_PAUSE_THRESHOLD", 0.0)
+    s = audio_io._SherpaStream(on_phrase=lambda t: None,
+                               on_partial=lambda t: None)
+    rec = _FakeRecognizer(partial="hi the", final="hi there", endpoint=False)
+    s._recognizer = rec
+    s._stream = rec.create_stream()
+    s._dispatch_q = queue.Queue()
+    # One loud speech block opens the gate...
+    s._process_block(_speech_block())
+    assert rec.decode_calls > 0, "sherpa decode must run after accept_waveform"
+    assert s._dispatch_q.empty(), "mid-speech must not dispatch yet"
+    # ...then trailing silence beyond STT_PAUSE_THRESHOLD closes it, even with
+    # sherpa's is_endpoint() stuck at False (the continuous-hearing bug).
+    s._silence_since = time.time() - 5.0
+    s._process_block(_silence_block())
+    assert s._dispatch_q.qsize() == 1, "gate must dispatch the final phrase"
+    assert s._dispatch_q.get() == "hi there"
+    assert rec.reset_calls == 1, "stream must reset after the gate closes"
+
+
+def test_sherpa_stream_ignores_short_noise_phrase(monkeypatch):
+    """Sustained-speech gate must still drop a noise blip even though the
+    trailing-silence boundary fired - the blip never reaches on_phrase."""
+    monkeypatch.setattr(audio_io.config, "STT_MIN_SPEECH_SECONDS", 0.4)
+    monkeypatch.setattr(audio_io.config, "STT_FINAL_ENGINE", "sherpa")
+    monkeypatch.setattr(audio_io.config, "STT_PAUSE_THRESHOLD", 0.0)
+    s = audio_io._SherpaStream(on_phrase=lambda t: None,
+                               on_partial=lambda t: None)
+    rec = _FakeRecognizer(final="tip tap", endpoint=True)
+    s._recognizer = rec
+    s._stream = rec.create_stream()
+    s._dispatch_q = queue.Queue()
+    s._process_block(_speech_block())
+    s._silence_since = time.time() - 5.0
+    s._process_block(_silence_block())
+    assert s._dispatch_q.empty(), "noise blip must not be dispatched"
+
+
+def test_sherpa_stream_enqueues_offline_refinement(monkeypatch):
+    """With STT_FINAL_ENGINE=parakeet a finalized phrase must also be queued
+    for the offline parakeet refinement pass on the captured clip."""
+    monkeypatch.setattr(audio_io.config, "STT_MIN_SPEECH_SECONDS", 0.0)
+    monkeypatch.setattr(audio_io.config, "STT_FINAL_ENGINE", "parakeet")
+    monkeypatch.setattr(audio_io.config, "STT_PAUSE_THRESHOLD", 0.0)
+    s = audio_io._SherpaStream(on_phrase=lambda t: None,
+                               on_partial=lambda t: None)
+    rec = _FakeRecognizer(final="hi there", endpoint=True)
+    s._recognizer = rec
+    s._stream = rec.create_stream()
+    s._dispatch_q = queue.Queue()
+    s._fin_q = queue.Queue()
+    s._process_block(_speech_block())
+    s._silence_since = time.time() - 5.0
+    s._process_block(_silence_block())
+    assert s._dispatch_q.qsize() == 1
+    assert s._fin_q.qsize() == 1, "parakeet final pass must be queued"

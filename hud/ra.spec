@@ -9,7 +9,7 @@ hiddenimports = ['openai', 'groq', 'edge_tts', 'vosk', 'playsound3', 'faster_whi
                  'ctranslate2', 'pyttsx3', 'pypdf', 'requests', 'psutil', 'pytesseract',
                  'PIL', 'ddgs', 'fastapi', 'uvicorn', 'websockets', 'anyio', 'httpx',
                  'pydantic', 'watchfiles', 'webview', 'pythonnet',
-                 'clr_loader']
+                 'clr_loader', 'sherpa_onnx']
 hiddenimports += collect_submodules('ddgs')
 hiddenimports += collect_submodules('uvicorn')
 hiddenimports += collect_submodules('fastapi')
@@ -18,6 +18,14 @@ hiddenimports += collect_submodules('pythonnet')
 datas += collect_data_files('faster_whisper')
 binaries += collect_dynamic_libs('vosk')
 hiddenimports += collect_submodules('faster_whisper')
+binaries += collect_dynamic_libs('sherpa_onnx')
+# sherpa-onnx ships sherpa-onnx-core DLLs + onnxruntime; make sure PyInstaller
+# also picks up the sherpa_onnx data (config files) if the package carries any.
+from PyInstaller.utils.hooks import collect_all
+_sherpa_data, _sherpa_bins, _sherpa_hidden = collect_all('sherpa_onnx')
+datas += _sherpa_data
+binaries += _sherpa_bins
+hiddenimports += _sherpa_hidden
 hiddenimports += ['ra.plugins', 'ra.scheduler', 'ra.tasklist', 'ra.transcribe',
                   'ra.redact', 'ra.rag.indexer', 'ra.rag.sources', 'ra.memory',
                   'ra.fastlane', 'ra.monitor', 'ra.selftest']
