@@ -271,7 +271,7 @@ ASSISTANT_NAME = "Ra"                 # "Ra" - so very proper
 # conversation that then flows for the whole session without repeating it.
 # Override: RA_WAKE_WORDS=fire up,ra
 WAKE_WORDS = [w.strip().lower() for w in
-              _env("RA_WAKE_WORDS", "fire up, ra, hey ra, rah, raw, ray, rad, rock").split(",") if w.strip()]
+              _env("RA_WAKE_WORDS", "fire up").split(",") if w.strip()]
 WAKE_WORD = WAKE_WORDS[0] if WAKE_WORDS else "fire up"  # default wake word
 LAUNCH_PHRASE = "fire up"                # say this to launch the app from the background listener
 SYSTEM_PROMPT = (
@@ -504,14 +504,14 @@ STT_PAUSE_THRESHOLD = 0.8
 # many seconds. Background noise blips (typing, slams, coughing) end a Vosk
 # utterance instantly - without this gate they turn into fake "phrases" that
 # interrupt the conversation. Env: RA_STT_MIN_SPEECH_SECONDS.
-STT_MIN_SPEECH_SECONDS = float(_env("RA_STT_MIN_SPEECH_SECONDS", "0.15"))
+STT_MIN_SPEECH_SECONDS = float(_env("RA_STT_MIN_SPEECH_SECONDS", "0.4"))
 STT_UTTERANCE_BUFFER_SECONDS = 30        # rolling buffer for re-transcription
 # Room-noise calibration. Modulation alone only confirms WEAK audio: a steady
 # fan / AC / cooler hum is flat (low CV) and is never treated as speech, while
 # a speaker arguing over it is modulated and still heard. 0 disables the
 # modulation gate (older lenient behavior, more fan false-positives).
 # Env: RA_STT_MODULATION (0.0-1.0, higher = stricter).
-STT_MODULATION_THRESHOLD = float(_env("RA_STT_MODULATION", "0.05"))
+STT_MODULATION_THRESHOLD = float(_env("RA_STT_MODULATION", "0.10"))
 # A block whose mean amplitude is at/above this is ALWAYS "speech" - screams,
 # shouts and close-talking must be heard regardless of envelope shape (a held
 # shout has a nearly flat envelope and must not be gated out). Absolute mean
@@ -525,7 +525,7 @@ STT_MIN_SIGNAL_LEVEL = float(_env("RA_STT_MIN_SIGNAL", "0.005"))
 # Speech/ambient band ratio: audio well above the tracked room level (fan hum,
 # talking people nearby) counts as speech without needing envelope proof.
 # Env: RA_STT_NOISE_RATIO (higher = only much louder input is auto-accepted).
-STT_NOISE_RATIO = float(_env("RA_STT_NOISE_RATIO", "1.0"))
+STT_NOISE_RATIO = float(_env("RA_STT_NOISE_RATIO", "1.8"))
 # Loud-audio ceiling for the noise floor: any block at/above `noise * NOISE_UP`
 # never moves the floor, so a shout or running speech can NEVER lift Ra's
 # hearing threshold (this is what made it go deaf mid-conversation before).

@@ -1242,10 +1242,10 @@ def _contains_wake(text: str) -> bool:
 def _is_valid_speech(text: str, audio, sustained: float, min_speech: float) -> bool:
     if not text:
         return False
-    # A recognized phrase containing a wake word is ALWAYS valid speech (e.g. "ra")
-    if _contains_wake(text):
-        return True
-    # Non-wake phrases (noise blips, ambient sounds) must meet sustained speech duration
+    # A phrase only counts when it holds SUSTAINED speech for the minimum
+    # duration - a wake word inside a noise-blip hallucination alone does NOT
+    # bypass the gate (that bypass was cherry-picked for the deaf sherpa
+    # streaming path and floods vosk with phantom phrases).
     if min_speech > 0 and sustained < min_speech:
         return False
     if audio is not None and not _is_human_audio(audio):
@@ -1353,10 +1353,19 @@ class MicSession:
 
     # -- noise floor --------------------------------------------------------
     def _track_noise(self, level: float, block):
-        """Adapt the floor to the room's ambient. Loud audio (speech, shouts,
-        slams) NEVER moves the floor - a loud user must not become the new
-        hearing threshold - and a steady fan hum is absorbed as room tone."""
-        self._noise = _track_noise_floor(self._noise, level)
+        """Slow-adapt the floor to the room's ambient. Loud audio (speech,
+        shouts, slams) NEVER moves the floor - a loud user must not become the
+        new hearing threshold - and a steady fan hum is absorbed as room tone.
+        Mirrors the PROVED vosk-era tracker (energy-only)."""
+        floor = self._noise
+        if level > floor * 3:
+            return  # speech - don't let loud audio raise the floor
+        self._noise = floor * 0.95 + level * 0.05
+
+    def _speech_level(self, level: float) -> bool:
+        """PROVED vosk-era speech test: strictly above the (2x) adapted floor,
+        with an absolute floor so dead-quiet rooms still hear speech."""
+        return level > max(self._noise * 2.0, 0.006)
 
     # -- utterance clip (audio for the CURRENT phrase only) ----------------
     def _clip_block(self, block):
@@ -1453,10 +1462,11 @@ class MicSession:
         level = float(np.abs(block).mean()) / 32768.0
         self._track_noise(level, block)
         sec = block.shape[0] / _SAMPLE_RATE
-        # Band classifier: a scream is ALWAYS speech, audio clearly above the
-        # ambient hum is speech, and only weak near-floor audio needs envelope
-        # modulation proof (fan / AC hum is flat real speech is not).
-        talking = _classify_speech(level, block, self._noise)
+        # PROVED vosk-era energy gate: only blocks clearly above the adapted
+        # floor count as speech. Modulation/band classifiers were added during
+        # the sherpa round and flood vosk with room noise (every block at the
+        # floor passed), which both hallucinates phrases AND drowns real speech.
+        talking = self._speech_level(level)
         _stt_debug("vol=%s lvl=%.4f cv=%.3f floor=%.4f -> %s" % (
             "S" if talking else "-", level,
             _energy_cv(block) if level >= config.STT_MIN_SIGNAL_LEVEL else 0.0,
